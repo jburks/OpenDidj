@@ -8,7 +8,7 @@ export UBOOT_CROSS_COMPILE=arm-linux-
 export TARGET_MACH=LF_LF1000
 
 export ROOTFS_PATH=$DIDJ_WORK/rootfs/
-export EROOTFS_PATH=$DIDJ/WORK/erootfs/
+export EROOTFS_PATH=$DIDJ_WORK/erootfs/
 export TFTP_PATH=$DIDJ_WORK/tftp/
 export RELEASE_PATH=$DIDJ_WORK/release/
 
