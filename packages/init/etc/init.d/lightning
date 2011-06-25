@@ -1,0 +1,36 @@
+#!/bin/sh
+
+case "$1" in
+	start)
+		start-stop-daemon --start --background --exec /usr/bin/launch_main
+		;;
+
+	stop)
+		# disable the power down timer
+		killmainapp
+		start-stop-daemon --stop --name launch_main
+		# display splash screen
+		STATUS=`cat /sys/devices/platform/lf1000-power/status`
+		case "$STATUS" in
+			"3" | "4")
+				display_screen PENDING_POWERDOWN_LOW_BATTERY_STATE
+				;;
+			*)
+				display_screen PENDING_POWERDOWN_STATE
+				;;
+		esac
+		oss -w /var/sounds/PowerDown_32k.wav
+		;;
+
+	restart)
+		$0 stop
+		$0 start
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac
+
+exit 0
+

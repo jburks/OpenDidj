@@ -1,0 +1,10 @@
+###############################################################################
+# LF1000 SPI Bus Driver                                                       #
+#                                                                             #
+# 06/07/2007 by Scott Esters <sesters@leapfrog.com>                           #
+###############################################################################
+
+I2S driver documentation and notes.
+
+1.  Build the code by recompling the linux kernel
+2.  You can show registers with 'cat /proc/driver/audio_spi'

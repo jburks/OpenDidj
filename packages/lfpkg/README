@@ -1,0 +1,54 @@
+Introduction
+------------
+
+lfpkg is the Leapfrog package handler program.  It is capable of creating,
+installing, validating installed packages, and removing packages.  It is 
+written in sh (i.e., not bash) so that it can run on any linux system.  
+If you modify it, please test it on the lightning target.
+
+The package format is specified by the middleware group in a document entitled
+"USB Mass-Storage Class Device Communication Specification."  It should be
+available at:
+
+http://emma.leapfrog.com/display/MDLWR/Specifications
+
+This implementation is based on revision 0.09 of this document.  In addition to
+all features in this document, lfpkg implements a simple extension (see below).
+
+The locations of where packages go, and the type-to-directory mapping for
+Lightning are specified by the content team in the following documents:
+
+http://emma.leapfrog.com/download/attachments/9831297/Lightning+Folder+Structure+TDD.doc
+http://emma.leapfrog.com/download/attachments/9831297/PC+App+Compliance+TDD.doc
+
+Usage Details
+--------------
+
+If you don't need a tutorial on this stuff, just run "lfpkg -h" for usage in
+brief.
+
+A package is a zip file with the file extension ".lfp" that unzips to form a
+single directory that is descriptive of the package.  For example, the package
+"foo-1.2.3.lfp" can be unzipped to form a directory "foo" that contains the
+files in the foo package.  One of these files is foo/meta.inf, whose format is
+specified by the aforementioned document.  See the foo directory next to this
+README for an example meta.inf file.
+
+All packages are installed in a package base called the DEVICE_ROOT in the
+parlance of the middleware team.  On the lightning target, DEVICE_ROOT defaults
+to /Didj.  You can specify an alternative base using the -b option to lfpkg.
+
+A package has a type that is specified in the meta.inf file.  Packages of a
+certain type go in a certain subdirectory of DEVICE_ROOT.  The mapping between
+type and subdirectory are specified by the content team and are hard-coded in
+the lfpkg script.  See the script for details.  If you want to override the
+type, you may do so by using the -d option to lfpkg.  If you supply the -d
+option the package type is ignored and the package is installed in the specified
+directory instead.
+
+If a package contains a file named "postinstall," and the file begins with the
+line "#!/bin/sh", it will be executed after the package is installed.  This is
+an extension to the package format specified by middleware that is meant to
+allow more complex per-package behavior.
+
+[More to come.  See lfpkg -h for more detail]

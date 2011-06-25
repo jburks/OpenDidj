@@ -1,0 +1,36 @@
+version
+uclibc
+busybox
+init
+strace
+lfpkg
+# gdb requires termcap
+termcap
+# gdb
+# mtd-utils depends on zlib and so does mplayer?
+zlib
+libpng
+# lftest
+# mtd-utils depends on lzo and argp
+argp
+lzo
+mtd-utils
+# we gave up on alsa, and mplayer no longer depends on it.
+# alsa
+# oprofile requires popt and objdump, which comes from binutils.
+popt
+# binutils
+# oprofile
+# mpatrol also requires binutils.
+mpatrol
+dosfstools
+usb-utils
+cart-utils
+screens
+mfg-cart
+fwupdate
+#monitord
+pmap
+i2c-utils
+sdl
+dropbear

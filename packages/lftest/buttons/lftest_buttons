@@ -1,0 +1,56 @@
+#!/bin/sh
+
+. /var/lib/lftest/functions
+
+# parse args
+set_standard_opts $*
+
+CLASS="buttons"
+
+if [ "$INTERACTIVE" = "0" ]; then
+	exit 0;
+fi
+
+on_headphones() {
+	CHECK=`switches-example | grep headphones | cut -d ' ' -f 3`
+	if [ "$CHECK" == "yes" ]; then
+		return 0
+	fi
+	return 1
+}
+
+off_headphones() {
+	CHECK=`switches-example | grep headphones | cut -d ' ' -f 3`
+	if [ "$CHECK" == "no" ]; then
+		return 0
+	fi
+	return 1
+}
+
+
+off_headphones
+if [ $? -eq 0 ]; then
+	QUESTION="Please plug in the headphones"
+	TEST="detecting" run_test_interactive $QUESTION
+	CMD="on_headphones"
+	TEST="headphones detected?" run_test_non_interactive $CMD
+	QUESTION="Please unplug the headphones"
+	TEST="detecting" run_test_interactive $QUESTION
+	CMD="off_headphones"
+	TEST="headphones removed?" run_test_non_interactive $CMD
+else
+	QUESTION="Please unplug the headphones"
+	TEST="detecting" run_test_interactive $QUESTION
+	CMD="off_headphones"
+	TEST="headphones removed?" run_test_non_interactive $CMD
+	QUESTION="Please plug in the headphones"
+	TEST="detecting" run_test_interactive $QUESTION
+	CMD="on_headphones"
+	TEST="headphones detected?" run_test_non_interactive $CMD
+fi
+
+echo "test the buttons? "
+CMD="keyboard-example"
+TEST="test buttons" run_test_interactive $CMD
+
+exit 0

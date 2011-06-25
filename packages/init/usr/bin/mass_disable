@@ -1,0 +1,6 @@
+#!/bin/sh
+
+usbctl -d mass_storage -a disable
+modprobe -r g_file_storage
+
+mount /opt

@@ -1,0 +1,188 @@
+#!/bin/sh
+
+set -e
+
+HELP="\
+fwupdate [pkg] \n\
+\n\
+When run without options, fwupdate looks for a candidate firmware package to\n\
+install using the fwcheck utility.  When run with an argument, the argument must\n\
+be a .lfp, or a directory that contains a valid unpacked .lfp.  If the update\n\
+succeeds, the exit status is 0.\n\
+ -h              help \n\n\
+"
+
+# ensure that usb is disabled
+usbctl -d mass_storage -a disable > /dev/null
+
+while getopts "h" opt; do
+	case "$opt" in
+		"h")
+			echo -e "$HELP"
+			exit 0
+			;;
+		*)
+			echo -e "$HELP"
+			exit 1
+			;;
+	esac
+done
+
+PKG=""
+shift $(($OPTIND - 1))
+for p in $*; do
+	PKG=$p
+	break
+done
+
+# helper functions
+MTD_NUM=""
+name_to_mtdnum() {
+	MTD_NUM=`cat /proc/mtd  | grep -w -e \"$1\" | cut -d : -f 1 | cut -c 4-`
+	if [ "$MTD_NUM" = "" ]; then
+		echo "Failed to find proper mtd device for $1.  Failing."
+		exit 1
+	fi
+}
+
+# ensure external power or battery above 4500 millivolts
+EXTERNAL_POWER=`cat /sys/devices/platform/lf1000-power/external`
+BATTERY_VOLTAGE=`cat /sys/devices/platform/lf1000-power/voltage`
+MIN_VOLTAGE=4500
+check_power() {
+        if [ $EXTERNAL_POWER = 0 -a $BATTERY_VOLTAGE -lt $MIN_VOLTAGE ]; then
+                echo "Battery voltage too low, failing to install $PKG"
+                exit 1
+        fi
+}
+
+# install file $1 in mtd device $2
+FILE_SUM=""
+flash_file() {
+#	check_power
+	name_to_mtdnum "$2"
+	echo "Installing $1 in $2 (mtd$MTD_NUM)"
+	flash_eraseall /dev/mtd$MTD_NUM > /dev/null
+	nandwrite -p /dev/mtd$MTD_NUM $1 > /dev/null
+	FILE_SIZE=`ls -l $1 | tr -s "" " " | cut -d" " -f5`
+	FILE_SUM=`nanddump -m -l $FILE_SIZE /dev/mtd$MTD_NUM 2> /dev/null`
+}
+
+if [ "$PKG" = "" ]; then
+	# See if fwcheck says we need to update, and set PKG accordingly
+	PKG=`fwcheck`
+	if [ "$PKG" = "" ]; then
+		# No update required, or PKG was not found
+		exit 0
+	fi
+fi
+
+# If we're here, PKG is a package that we are meant to install.  If it's an lfp,
+# unpack it
+
+# TODO: remove old package if it exists
+
+if [ -f $PKG ]; then
+#	check_power
+	echo "Installing $PKG"
+	lfpkg -a install $PKG > /dev/null
+	RESULT=$?
+	if [ $RESULT != 0 ]; then
+		echo "lfpkg -a install failed with exit code $RESULT";
+		exit $RESULT;
+	else
+		echo "lfpkg -a install succeeded";
+	fi
+	lfpkg -a validate $PKG > /dev/null
+	RESULT=$?
+	if [ $RESULT != 0 ]; then
+		echo "lfpkg -a validate failed with exit code $RESULT";
+		exit $RESULT;
+	else
+		echo "lfpkg -a validate succeeded";
+	fi
+	# This is kind of a hack.  We ASSUME lfpkg unpacks to /Didj/Base/firmware-*
+	PKG_DIR=`ls -d /Didj/Base/firmware-* | head -1`
+elif [ -d $PKG ]; then
+	echo "Found $PKG"
+	PKG_DIR=$PKG
+else
+	echo "Failed to find $PKG"
+	exit 1
+fi
+
+# Now let's decide which RFS we're booted from, and install in the other:
+CURRENT_RFS=`cat /flags/rootfs | cut -c 4-`
+
+if [ "$CURRENT_RFS" = "0" ]; then
+	FS=1
+elif [ "$CURRENT_RFS" = "1" ]; then
+	FS=0
+else
+	echo "Invalid /flags/rootfs file.  Failing to install $PKG"
+	exit 1
+fi
+
+# find pkg directory and verify contents
+cd $PKG_DIR
+
+REQUIRED_FILES="erootfs.jffs2 erootfs.md5 kernel.md5"
+for f in $REQUIRED_FILES; do
+	if [ ! -e $f ]; then
+		echo "Can't find firmware files.  Failing."
+		exit 1
+	fi
+done
+
+# check for kernel image
+if [ -e kernel.bin ]; then
+	KERNEL_FILE=kernel.bin
+elif [ -e kernel.jffs2 ]; then
+	KERNEL_FILE=kernel.jffs2
+else
+	echo "Can't find kernel image file.  Failing."
+	exit 1
+fi
+
+# Calculate MD5 of files:
+ACTUAL_ROOT_SUM=`md5sum erootfs.jffs2 | tr -s "" " " | cut -d" " -f1`
+ACTUAL_KERNEL_SUM=`md5sum $KERNEL_FILE | tr -s "" " " | cut -d" " -f1`
+EXPECTED_ROOT_SUM=`cat erootfs.md5`
+EXPECTED_KERNEL_SUM=`cat kernel.md5`
+
+if [ ! "$ACTUAL_ROOT_SUM" = "$EXPECTED_ROOT_SUM" ]; then
+	echo "erootfs file corrupted.  Failing."
+	exit 1
+fi
+
+if [ ! "$ACTUAL_KERNEL_SUM" = "$EXPECTED_KERNEL_SUM" ]; then
+	echo "kernel file corrupted.  Failing."
+	exit 1
+fi
+
+echo "Package Integrity Test Passed"
+
+# Install
+flash_file "$KERNEL_FILE" "Kernel$FS"
+if [ ! "$FILE_SUM" = "$EXPECTED_KERNEL_SUM" ]; then
+	echo "kernel flash failed.  Failing."
+	exit 1
+fi
+echo "Kernel install successful."
+
+flash_file "erootfs.jffs2" "Linux_RFS$FS"
+if [ ! "$FILE_SUM" = "$EXPECTED_ROOT_SUM" ]; then
+	echo "rootfs flash failed.  Failing."
+	exit 1
+fi
+echo "Rootfs install successful."
+
+# Finally, we switch to the other fs
+RFS_PREFIX=`cat /flags/rootfs | cut -c -3`
+CURRENT_FS=`cat /flags/rootfs`
+NEW_FS="$RFS_PREFIX$FS"
+echo "Switching from $CURRENT_FS to $NEW_FS"
+echo "$NEW_FS" > /flags/rootfs
+sync
+
+exit 0

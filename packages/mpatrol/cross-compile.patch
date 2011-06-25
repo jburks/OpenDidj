@@ -1,0 +1,34 @@
+diff -ru mpatrol-orig/build/unix/Makefile mpatrol/build/unix/Makefile
+--- mpatrol-orig/build/unix/Makefile	2002-01-08 12:41:01.000000000 -0800
++++ mpatrol/build/unix/Makefile	2008-01-15 14:23:46.000000000 -0800
+@@ -27,8 +27,8 @@
+ # Definitions
+ 
+ SHELL = /bin/sh
+-CC    = g++
+-AR    = ar
++CC    = arm-linux-g++
++AR    = arm-linux-ar
+ LD    = $(CC)
+ LINT  = lint
+ 
+@@ -39,7 +39,7 @@
+ GUISUP	= false
+ 
+ ifeq ($(GUISUP),true)
+-CFLAGS	= -I$(SOURCE) -I$(TOOLS) -I/usr/X11R6/include -I/usr/X11R5/include -I/usr/X11/include -I/usr/X/include -DMP_GUI_SUPPORT=1
++CFLAGS	= -I$(SOURCE) -I$(TOOLS) -I/usr/X11R6/include -I/usr/X11R5/include -I/usr/X11/include -I/usr/X/include -DMP_GUI_SUPPORT=1 -DMP_PRELOAD_SUPPORT=1
+ else
+ CFLAGS	= -I$(SOURCE) -I$(TOOLS)
+ endif
+@@ -213,6 +213,10 @@
+ 
+ lint: $(LINT_MPATROL) $(LINTTS_MPATROL) $(LINT_MPALLOC) $(LINT_MPTOOLS)
+ 
++install:
++	cp -ra *.so* $(PREFIX)/lib/
++	cp -ra mpatrol mprof mptrace mleak $(PREFIX)/bin/
++
+ clean:
+ 	-@ rm -f $(ARCHIVE_MPTOBJS) $(ARCHTS_MPTOBJS) 2>&1 >/dev/null
+ 	-@ rm -f $(SHARED_MPTOBJS) $(SHARTS_MPTOBJS) 2>&1 >/dev/null

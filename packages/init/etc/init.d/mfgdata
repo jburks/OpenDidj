@@ -1,0 +1,59 @@
+#!/bin/sh
+
+ABF_MOUNT=/flags
+MFG_PART=Manufacturing_Data
+MFG_MOUNT=/mfgdata
+MTD_NUM=`cat /proc/mtd  | grep \"$MFG_PART\" | cut -d : -f 1 | cut -c 4-`
+
+case "$1" in
+	start)
+		echo "Mounting Manufacturing Data partition"
+		
+		if [ "$MTD_NUM" = "" ]; then
+			"ERROR: $MFG_PART partition does not exist"
+			exit 1;
+		fi
+
+		MOUNTED=`mount | grep -e "^/dev/mtdblock$MTD_NUM "`
+		if [ ! "$MOUNTED" = "" ]; then
+			echo "/dev/mtdblock$MTD_NUM already mounted."
+			exit 1;
+		fi
+		
+		if [ -e $MFG_MOUNT -a ! -d $MFG_MOUNT ]; then
+			echo "Warning: Expecting $MFG_MOUNT to be a directory.  Deleting it."
+			rm -rf $MFG_MOUNT
+		fi
+		
+		mount -t jffs2 -o ro,sync,noatime /dev/mtdblock$MTD_NUM $MFG_MOUNT
+		RESULT=$?
+		
+		if [ ! "$RESULT" = "0" ]; then
+			echo "Warning: Cannot mount $MFG_PART.  Reformatting it."
+			flash_eraseall /dev/mtd$MTD_NUM
+			nandwrite /dev/mtd$MTD_NUM /etc/mfgdata/mfgdata.jffs2
+			mount -t jffs2 -o ro,sync,noatime /dev/mtdblock$MTD_NUM $MFG_MOUNT
+		fi
+		
+		# remount as read/write if we're in manufacturing mode
+		if [ -e $ABF_MOUNT/mfcart ]; then
+			mount -o remount,rw /mfgdata
+		fi
+		;;
+	
+	stop)
+		echo "Unmounting Manufacturing Data partition"
+		if [ "$MTD_NUM" = "" ]; then
+			"ERROR: $MFG_PART partition does not exist"
+			exit 1;
+		fi
+		umount /dev/mtdblock$MTD_NUM
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac
+
+
+exit 0

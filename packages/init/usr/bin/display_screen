@@ -1,0 +1,49 @@
+#!/bin/sh
+
+# Splash screen path will eventually depend on locale.  For now, it is fixed.
+SCREEN_PATH=/var/screens
+
+# This function displays the screen associated with the state $1.  The
+# associations are programmed in the following table.  We'll probably have to
+# add internationalization here at some point.
+STATE_TO_SCREEN=" \
+POWER_ON_RESET_STATE: \
+FIRMWARE_UPDATE_STATE:UPDATE_IN_PROGRESS.png \
+RUN_MAIN_APP_STATE: \
+MAIN_APP_DONE_STATE: \
+DOWNLOAD_FAILED_STATE:DOWNLOAD_FAILED.png \
+DOWNLOAD_COMPLETE_STATE:DOWNLOAD_COMPLETE.png \
+DOWNLOAD_IN_PROGRESS_STATE:DOWNLOAD_IN_PROGRESS.png \
+REINSERT_CART_STATE:REINSERT_CART.png \
+PENDING_POWERDOWN_STATE:SHUTDOWN.png \
+PENDING_REPAIR_STATE:ATTENTION_NEEDED.png \
+PENDING_POWERDOWN_LOW_BATTERY_STATE:LOW_BATTERIES.png
+"
+
+FOUND_STATE=0
+for s in $STATE_TO_SCREEN; do
+	state=`echo $s | cut -d : -f 1`
+	screen=`echo $s | cut -d : -f 2`
+	if [ "$1" = "$state" ]; then
+		if [ "$screen" = "" ]; then
+			exit 1
+		else
+			if [ ! -e $SCREEN_PATH/$screen ]; then
+				exit 1
+			fi
+		fi
+		FOUND_STATE=1
+		break
+	fi
+done
+if [ $FOUND_STATE = 0 ]; then
+	exit 1
+fi
+
+layer-control /dev/layer2 s enable off
+imager /dev/layer0 $SCREEN_PATH/$screen
+layer-control /dev/layer0 s enable on
+layer-control /dev/layer0 s dirty
+layer-control /dev/layer2 s dirty
+
+exit 0;

@@ -1,0 +1,92 @@
+#!/bin/sh
+
+set -e
+
+PKG=$1
+
+if [ "$PKG" = "" ]; then
+	# See if blcheck says we need to update, and set PKG accordingly
+	PKG=`blcheck`
+	if [ "$PKG" = "" ]; then
+		# No update required, or PKG was not found
+		exit 0
+	fi
+fi
+
+# helper functions
+MTD_NUM=""
+name_to_mtdnum() {
+	MTD_NUM=`cat /proc/mtd  | grep -w -e \"$1\" | cut -d : -f 1 | cut -c 4-`
+	if [ "$MTD_NUM" = "" ]; then
+		echo "Failed to find proper mtd device for $1.  Failing."
+		exit 1
+	fi
+}
+
+# ensure external power or battery above 4500 millivolts
+EXTERNAL_POWER=`cat /sys/devices/platform/lf1000-power/external`
+BATTERY_VOLTAGE=`cat /sys/devices/platform/lf1000-power/voltage`
+MIN_VOLTAGE=4500
+check_power() {
+	if [ $EXTERNAL_POWER = 0 -a $BATTERY_VOLTAGE -lt $MIN_VOLTAGE ]; then
+        	echo "Battery voltage too low, failing to install $PKG"
+        	exit 1
+	fi
+}
+
+# install file $1 in mtd device $2
+FILE_SUM=""
+flash_file() {
+#	check_power
+	name_to_mtdnum "$2"
+	echo "Installing $1 in $2 (mtd$MTD_NUM)"
+	flash_eraseall /dev/mtd$MTD_NUM > /dev/null
+	nandwrite -p /dev/mtd$MTD_NUM $1 > /dev/null
+	FILE_SIZE=`ls -l $1 | tr -s "" " " | cut -d" " -f5`
+	FILE_SUM=`nanddump -m -l $FILE_SIZE /dev/mtd$MTD_NUM 2> /dev/null`
+}
+
+# unzip the package
+if [ -f $PKG ]; then
+#	check_power
+	echo "Installing $PKG"
+	lfpkg -a install $PKG > /dev/null
+	# We ASSUME lfpkg unpacks to /Didj/Base/bootloader-*
+	PKG_DIR=`ls -d /Didj/Base/bootstrap-* | head -1`
+elif [ -d $PKG ]; then
+	echo "Found $PKG"
+	PKG_DIR=$PKG
+else
+	echo "Failed to find $PKG"
+	exit 1
+fi
+
+cd $PKG_DIR
+REQUIRED_FILES="lightning-boot.bin lightning-boot.md5"
+for f in $REQUIRED_FILES; do
+	if [ ! -e $f ]; then
+		echo "Can't find bootloader files.  Failing."
+		exit 1
+	fi
+done
+
+# Calculate MD5 of:
+ACTUAL_SUM=`md5sum lightning-boot.bin | tr -s "" " " | cut -d" " -f1`
+EXPECTED_SUM=`cat lightning-boot.md5`
+
+if [ ! "$ACTUAL_SUM" = "$EXPECTED_SUM" ]; then
+	echo "bootloader file corrupted.  Failing."
+	exit 1
+fi
+
+echo "Package Integrity Test Passed"
+
+# Install
+flash_file "lightning-boot.bin" "LF1000_uniboot"
+if [ ! "$FILE_SUM" = "$EXPECTED_SUM" ]; then
+	echo "lightning-boot flash failed.  Board is bricked.  Sigh."
+	exit 1
+fi
+echo "Bootloader install successful."
+
+exit 0

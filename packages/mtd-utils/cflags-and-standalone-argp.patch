@@ -1,0 +1,57 @@
+diff -Nur mtd-utils-orig/Makefile mtd-utils/Makefile
+--- mtd-utils-orig/Makefile	2007-09-11 17:43:22.000000000 -0700
++++ mtd-utils/Makefile	2007-09-12 12:42:32.000000000 -0700
+@@ -7,7 +7,7 @@
+ INCLUDEDIR=/usr/include
+ #CROSS=arm-linux-
+ CC := $(CROSS)gcc
+-CFLAGS := -I./include $(OPTFLAGS)
++CFLAGS += -I./include $(OPTFLAGS)
+ 
+ ifeq ($(origin CROSS),undefined)
+   BUILDDIR := .
+@@ -43,7 +43,7 @@
+ .SUFFIXES:
+ 
+ all: $(TARGETS)
+-	make -C $(BUILDDIR)/ubi-utils
++	make -C ubi-utils
+ 
+ IGNORE=${wildcard $(BUILDDIR)/.*.c.dep}
+ -include ${IGNORE}
+@@ -51,7 +51,7 @@
+ clean:
+ 	rm -f $(BUILDDIR)/*.o $(TARGETS) $(BUILDDIR)/.*.c.dep $(SYMLINKS)
+ 	if [ "$(BUILDDIR)x" != ".x" ]; then rm -rf $(BUILDDIR); fi
+-	make -C $(BUILDDIR)/ubi-utils clean
++	make -C ubi-utils clean
+ 
+ $(SYMLINKS):
+ 	ln -sf ../fs/jffs2/$@ $@
+@@ -92,4 +92,4 @@
+ 	install -m0755 ${TARGETS} ${DESTDIR}/${SBINDIR}/
+ 	mkdir -p ${DESTDIR}/${MANDIR}/man1
+ 	gzip -c mkfs.jffs2.1 > ${DESTDIR}/${MANDIR}/man1/mkfs.jffs2.1.gz
+-	make -C $(BUILDDIR)/ubi-utils install
++	make -C ubi-utils install
+diff -Nur mtd-utils-orig/ubi-utils/Makefile mtd-utils/ubi-utils/Makefile
+--- mtd-utils-orig/ubi-utils/Makefile	2007-09-11 17:43:22.000000000 -0700
++++ mtd-utils/ubi-utils/Makefile	2007-09-12 12:42:32.000000000 -0700
+@@ -10,7 +10,7 @@
+ INCLUDEDIR=/usr/include
+ 
+ CC := $(CROSS)gcc
+-CFLAGS := -I./inc -I./src -I$(KERNELHDR) $(OPTFLAGS) -Werror \
++CFLAGS += -I./inc -I./src -I$(KERNELHDR) $(OPTFLAGS) -Werror \
+ 	-Wwrite-strings -W -std=gnu99 -DPACKAGE_VERSION=\"1.0\"
+ 
+ PERLPROGS = mkpfi ubicrc32.pl
+@@ -74,7 +74,7 @@
+ 	$(CC) $(LDFLAGS) -o $@ $^
+ 
+ ubicrc32: ubicrc32.o crc32.o
+-	$(CC) $(LDFLAGS) -o $@ $^
++	$(CC) $(LDFLAGS) -o $@ $^ -largp
+ 
+ install: ${TARGETS}
+ 	mkdir -p ${DESTDIR}/${SBINDIR}

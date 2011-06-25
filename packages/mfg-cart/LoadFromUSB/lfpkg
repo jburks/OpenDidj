@@ -1,0 +1,442 @@
+#!/bin/sh
+
+# Package Type to subdirectory mappings
+# type             | subdirectory
+# -----------------+-------------
+# System           | Base
+# Application      | ProgramFiles
+
+# Other mappings exist, but are not totally clear at this time.
+
+HELP=" \n\
+usage: \n\
+lfpkg [options] <pkg>\n\
+\n\
+pkg is either a proper .lfp package or a directory containing an uncompressed\n\
+.lfp package\n\
+\n\
+options:
+  -h                  print help help \n\
+\n\
+  -a <action>         Take the specified <action> on a package.  The -a\n\
+                      option is required.  Supported actions include\n\
+                      \n\
+                      create: <pkg> must be a directory containing a valid \n\
+                      meta.inf file.  The package <pkg>-<version>.lfp will\n\
+                      be created.  <version> is as specified in meta.inf.\n\
+                      \n\
+                      install: <pkg> can be a directory with a proper \n\
+                      meta.inf file or .lfp file.  In the former case, lfpkg\n\
+                      only runs the postinstall script if it exists.
+                      \n\
+                      remove: This is currently unsupported.  Packages must\n\
+                      be manually removed by a knowledgeable user.\n\
+                      \n\
+                      validate: Verify the installed files against the\n\
+		      checksums calculated when the package was created.\n\
+                      \n\
+                      version: Report the version of <pkg> and exit.\n\
+                      \n\
+		      list: List the contents of an archive
+\n\
+ -d <dir>             For install action, dir overrides the \"type\" in the\n\
+                      meta.inf file.  That is, the package foo would be \n\
+                      installed in <dir>/foo instead of DEVICE_ROOT/<typedir>.\n\
+                      If <pkg> is a directory, this option is ignored.\n\
+                      This option is ignored for the create action.\n\
+\n\
+ -b <base>            By default, packages are installed in DEVICE_ROOT, which\n\
+                      is /Didj on Lightning.  This option forces base to be \n\
+                      used instead of DEVICE_ROOT.\n\
+\n\
+"
+
+# Functions for validating and parsing meta.inf files.  This function could be
+# way more rigorous.
+
+META_VERSION=""
+META_TYPE=""
+
+validate_meta () {
+	METAFILE=$1
+
+	META_VERSION=`grep -e '\<Version=' "$METAFILE" | cut -d = -f 2- | cut -d \" -s -f 2`
+	if [ "$META_VERSION" = "" ]; then
+		return 1
+	fi
+	
+	META_TYPE=`grep "Type=" "$METAFILE" | cut -d = -f 2- | cut -d \" -s -f 2`
+	if [ "$META_TYPE" = "" ]; then
+		return 1
+	fi
+	
+	return 0
+}
+
+DIR=""
+type_to_dir () {
+	case "$1" in
+		"Application")
+			DIR="ProgramFiles"
+			;;
+		"System")
+			DIR="Base"
+			;;
+		"Avatar")
+			DIR="Data/Avatars"
+			;;
+		"CYODataset")
+			DIR="Data/CYO"
+			;;
+		"CustomCurriculum")
+			DIR="Data/CYO"
+			;;
+		"MicroDownload")
+			DIR="Data/MDL"
+			;;
+	esac
+	return 0
+}
+	
+# Parse Arguments
+BASE="/Didj"
+DIR=""
+ACTION=""
+PKG=""
+
+while getopts "ha:d:b:v" opt; do
+	case "$opt" in
+		"d")
+			DIR=$OPTARG
+			;;
+		"a")
+			ACTION=$OPTARG
+			;;
+		"b")
+			BASE=$OPTARG
+			;;
+		"h")
+			echo -e "$HELP"
+			exit 0
+			;;
+		"?")
+			exit 1
+			;;
+		*)
+			exit 1
+			;;
+	esac
+done
+
+shift $(($OPTIND - 1))
+for p in $*; do
+	PKG=$p
+	break
+done
+
+if [ "$PKG" = "" ]; then
+	echo "You must specify a package"
+	exit 1
+fi
+
+# Okay.  We have all of the arguments parsed.  Now let's validate them
+
+#PKG
+if [ ! -e "$PKG" ]; then
+	echo "Can't find $PKG"
+	exit 1
+fi
+
+if [ -f "$PKG" ]; then
+	LEN=`expr $PKG : '.*'`
+	SUFFIX=`echo $PKG | cut -c $(($LEN-3))-$LEN`
+	if [ ! "$SUFFIX" = ".lfp" ]; then
+		echo "Only .lfp packages are supported"
+	fi
+fi
+
+if [ -d "$PKG" -a "$ACTION" != "manifest" ]; then
+	if [ ! -e "$PKG/meta.inf" ]; then
+		echo "$PKG does not contain a meta.inf file"
+		exit 1
+	fi
+	validate_meta "$PKG/meta.inf"
+	RESULT=$?
+	if [ ! "$RESULT" = "0" ]; then
+		echo "$PKG/meta.inf is invalid."
+		exit 1
+	fi
+fi
+
+# ACTION
+if [ "$ACTION" = "" ]; then
+	echo "-a <action> is a required argument."
+	exit 1
+fi
+
+SUPPORTED_ACTIONS="create install validate version list manifest"
+SUPPORTED=0
+for a in $SUPPORTED_ACTIONS; do
+	if [ "$ACTION" = "$a" ]; then
+		SUPPORTED=1
+		break;
+	fi
+done
+
+if [ $SUPPORTED = 0 ]; then
+	echo "Action $ACTION is unsupported"
+	exit 1
+fi
+
+#DIR
+if [ ! "$DIR" = "" ]; then
+	if [ ! -e "$DIR" ]; then
+		echo "$DIR does not exist."
+		exit 1
+	fi
+	if [ ! -d "$DIR" ]; then
+		echo "$DIR is not a directory."
+		exit 1
+	fi
+fi
+
+# If we make it this far, all of our arguments are valid and we're ready to take
+# action.
+
+case "$ACTION" in 
+
+	"create")
+		echo "Creating $PKG-$META_VERSION.lfp ..."
+		TMPSUM=`mktemp /tmp/lfpkg.sum.XXXXXX`
+		rm -f $PKG/packagefiles.md5
+		WRKDIR=`pwd`
+		pwd
+		cd $PKG
+		pwd
+		FILES=`find . -name '.svn' -prune -o -print`
+		for file in $FILES ; do
+			if [ -f $file ] ; then
+				md5sum $file >> $TMPSUM
+			fi
+		done
+		cd $WRKDIR
+		pwd
+		cp $TMPSUM $PKG/packagefiles.md5
+		zip -r $PKG-$META_VERSION.lfp $PKG
+		echo "Done"
+		;;
+	
+	"install")
+		echo -n "Installing "
+		if [ ! -d "$BASE/tmp" ] ; then
+			mkdir -p $BASE/tmp
+		fi
+		TMPDIR=`mktemp -d $BASE/tmp/lfpkg.XXXXXX`
+		META=`unzip -l $PKG | grep -e '.*meta.inf$' | tr -s " " | cut -d' ' -f5`
+		unzip $PKG $META -d $TMPDIR > /dev/null
+		PKGDIR=`ls $TMPDIR/`
+		if [ ! -e "$TMPDIR/$PKGDIR/meta.inf" ] ; then
+			echo "$PKG does not contain a meta.inf file"
+			exit 1
+		fi
+		validate_meta "$TMPDIR/$PKGDIR/meta.inf"
+		RESULT=$?
+		if [ ! "$RESULT" = "0" ] ; then
+			echo "$PKG/meta.inf is invalid."
+			rm -rf $BASE/tmp 	#$TMPDIR
+			exit 1
+		fi
+	
+		# Map type to dir if dir not already set
+		if [ "X$DIR" = "X" ] ; then
+			type_to_dir $META_TYPE
+		fi
+
+		echo "$PKG to directory $BASE/$DIR/$PKGDIR ..."
+		if [ ! -d $BASE/$DIR ] ; then
+			mkdir -p $BASE/$DIR
+		fi
+		unzip -o $PKG -d $BASE/$DIR > /dev/null
+		rm -rf $BASE/tmp 	#$TMPDIR
+
+		if [ -f $BASE/$DIR/$PKGDIR/postinstall ] ; then
+			if [ ! -x $BASE/$DIR/$PKGDIR/postinstall ] ; then
+				chmod +x $BASE/$DIR/$PKGDIR/postinstall
+			fi
+			WRKDIR=`pwd`
+			cd $BASE/$DIR/$PKGDIR
+			./postinstall
+			cd $WRKDIR
+		fi
+		echo "Done"
+		;;
+
+	"validate")
+		echo -n "Validating "
+		if [ -d $PKG ] ; then
+			if [ -e $PKG/packagefiles.md5 ] ; then			
+				WRKDIR=`pwd`
+				cd $PKG
+				mkdir -p /tmp$BASE
+				md5sum -c packagefiles.md5 | grep "FAILED" > /tmp$BASE/md5.log
+				if [ "X`cat /tmp$BASE/md5.log`" != "X" ] ; then
+					cat /tmp$BASE/md5.log
+					cd $WRKDIR
+					exit 1
+				fi
+				cd $WRKDIR
+				rm -rf /tmp$BASE
+				echo "Package validation succeded."
+				exit 0					
+			else 
+				echo "$PKG does not contain a packagefiles.md5 file to validate with."
+				exit 1
+			fi
+
+
+		elif [ -f $PKG ] ; then
+			TMPDIR=`mktemp -d /tmp/lfpkg.XXXXXX`
+			META=`unzip -l $PKG | grep -e '.*meta.inf$' | tr -s " " | cut -d' ' -f5`
+			PACKAGE_FILE=`unzip -l $PKG | grep -e '.*packagefiles.md5$' | tr -s " " | cut -d' ' -f5`
+			
+			unzip $PKG $META -d $TMPDIR > /dev/null
+			unzip $PKG $PACKAGE_FILE -d $TMPDIR > /dev/null
+			PKGDIR=`ls $TMPDIR/`
+			if [ ! -e "$TMPDIR/$PKGDIR/meta.inf" ]; then
+				echo "$PKG does not contain a meta.inf file"
+				rm -rf $TMPDIR
+				exit 1
+			fi
+			validate_meta "$TMPDIR/$PKGDIR/meta.inf"
+			RESULT=$?
+			if [ ! "$RESULT" = "0" ]; then
+				echo "$PKG/meta.inf is invalid."
+				rm -rf $TMPDIR
+				exit 1
+			fi
+			# Map type to dir if dir not already set
+			if [ "X$DIR" = "X" ] ; then
+				type_to_dir $META_TYPE
+			fi
+			INSTALLED_DIR="`echo $BASE/$DIR/$PKGDIR/ | tr -s /`"
+			echo "$PKG in directory $INSTALLED_DIR ..."
+			if [ ! -d $INSTALLED_DIR ] ; then
+				echo "$PKG is not installed in $INSTALLED_DIR."
+				rm -rf $TMPDIR
+				exit 1 
+			fi
+			WRKDIR=`pwd`
+			cd $INSTALLED_DIR
+			PKG_VER=$META_VERSION
+			if [ ! -e "meta.inf" ]; then
+				echo "$INSTALLED_DIR does not contain a meta.inf file"
+				rm -rf $TMPDIR
+				exit 1
+			fi
+			validate_meta "meta.inf"
+			RESULT=$?
+			if [ ! "$RESULT" = "0" ]; then
+				echo "$INSTALLED_DIRmeta.inf is invalid."
+				rm -rf $TMPDIR	
+				exit 1
+			fi
+			if [ "$PKG_VER" != "$META_VERSION" ] ; then
+				echo "$INSTALLED_DIR veriosn $META_VERSION is not the same as package version $PKG_VER"
+				rm -rf $TMPDIR		
+				exit 1	
+			fi	
+			# I commented this out because if the package is available, we can always use the package's 
+			#      validation file (this over-rides looking on the cartridge in the correct directory for the packagefiles.md5).
+			#if [ ! -e packagefiles.md5 ] ; then	
+				cd $TMPDIR/$PKGDIR
+				if [ ! -e packagefiles.md5 ] ; then
+					echo "$PKG does not contain a packagefiles.md5 file to validate with."
+					rm -rf $TMPDIR		
+					exit 1
+				else
+					cat packagefiles.md5 | sed s:"./":"$INSTALLED_DIR": > packagefiles.md6
+					mv packagefiles.md6 packagefiles.md5
+				fi
+			#fi 		
+			mkdir -p /tmp$BASE
+			md5sum -c packagefiles.md5 | grep "FAILED" > /tmp$BASE/md5.log
+			if [ "X`cat /tmp$BASE/md5.log`" != "X" ] ; then
+				cat /tmp$BASE/md5.log
+				cd $WRKDIR
+				exit 1
+			fi
+			cd $WRKDIR
+			rm -rf /tmp$BASE
+			rm -rf $TMPDIR
+			echo "Package validation succeded."
+			echo "Done"
+						
+		else
+			echo "Can not find $PKG"
+			exit 1
+		fi
+		;;
+
+	"version")
+		if [ -d $PKG ]; then
+			META_FILE=$PKG/meta.inf
+		else
+			META_FILE_NAME=`unzip -l $PKG | grep -e '.*meta.inf$' | awk '{print $4}'`
+			unzip -o -q $PKG $META_FILE_NAME -d /tmp
+			if [ $? != 0 ]; then
+				exit 1
+			fi
+			META_FILE=/tmp/$META_FILE_NAME
+		fi
+		META_VERSION=`grep -e '\<Version=' "$META_FILE" | cut -d = -f 2- | cut -d \" -s -f 2`
+		echo $META_VERSION
+		exit 0
+		;;
+
+	"list")
+		unzip -l -q $PKG
+		exit 0
+		;;
+
+	"manifest")
+		# Create a manifest file from a directory filled with .lfp's
+		# This can happen either on the target Didj or on PC running Cygwin, Linux, or ??VMS
+		if [ ! -d $PKG ]; then
+			echo "Must pass directory to packages.  You passed $PKG";
+			exit 1;
+		fi
+		cd $PKG
+		# For each pkg in directory
+		for p in *.lfp; do
+			# Skip firmware and bootstrap
+			if echo $p | grep -e '\<\(bootstrap\|firmware\)-' > /dev/null; then
+				continue;
+			fi
+			### This was the old way of doing it: unzip into temp
+			#TMPDIR=`mktemp -d /tmp/lfpkg.XXXXXX`
+			#if [ ! "$TMPDIR" ]; then
+			#	echo "mktemp is acting up again!"
+			#	exit 1
+			#fi
+			#mkdir -p "$TMPDIR"
+			#unzip $PKG/$p \*meta.inf -d "$TMPDIR" > /dev/null
+			#METAFILE=`echo "$TMPDIR"/*/meta.inf`
+			#VER=`grep -e '\<Version=' "$METAFILE" | cut -d = -f 2- | cut -d \" -s -f 2 | sed -e 's/.*\.//'`
+			#TYPE=`grep "Type=" "$METAFILE" | cut -d = -f 2- | cut -d \" -s -f 2`
+			#PKGDIR=`basename "$TMPDIR"/*`
+			#rm -rf "$TMPDIR"
+
+			## Better way?  Use stdout
+			VER=`unzip -p $PKG/$p \*meta.inf | grep -e '\<Version=' | cut -d = -f 2- | tr -d \"`
+			TYPE=`unzip -p $PKG/$p \*meta.inf | grep "Type=" | cut -d = -f 2- | cut -d \" -s -f 2`
+			PKGDIR=`unzip -l $PKG/$p \*meta.inf | grep 'meta.inf$' | awk '{print $4}' | sed -e 's/\/meta.inf//'`
+
+			# Compute $DIR
+			type_to_dir $TYPE
+			echo "$BASE/$DIR/$PKGDIR:$VER:$p"
+		done
+		exit 0
+		;;
+esac
+
+exit 0

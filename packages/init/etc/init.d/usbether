@@ -1,0 +1,22 @@
+#!/bin/sh
+
+case "$1" in
+	start)
+		modprobe g_ether host_addr=00:dc:c8:f7:75:05 dev_addr=00:dd:dc:eb:6b:f1
+		ifconfig usb0 192.168.2.63
+;;
+	stop)
+		ifconfig usb0 down
+		modprobe -r g_ether
+		;;
+	restart)
+		$0 stop
+		$0 start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
+                                                        
+exit 0

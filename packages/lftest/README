@@ -1,0 +1,48 @@
+Welcome to the lftest directory.  This is the test framework for the LinuxDist
+part of the Lightning platform.  To run the tests, simply install the package
+and run "runall" at the prompt on the target.  To run the interactive
+qualitative tests, say "runall -i".
+
+Please observe the following guidelines when adding tests:
+
+-- Each test class should have a subdirectory.  For example, the gpio
+   subdirectory contains the gpio test class.  All of the tests related to
+   basic gpio functionality are contained in here.
+
+-- Each test class should have a single script (or other executable) named
+   lftest_xxx that runs each of the tests.  The xxx should be replaced by the
+   test class, such as lftest_gpio.  For each test that it runs, the lftest
+   script may print out whatever status information it wants.  But at the end
+   of the test, on a single line it should print:
+
+   lftest_xxx: <test name>: PASSED
+
+   or
+
+   lftest_xxx: <test name>: FAILED
+
+-- Each test class generally tests a unit of some sort.  For example, the gpio
+   test class effectively tests the gpio driver.
+
+-- Each test should provide an install script called install.sh.  Any
+   executable utilites required by the tests should be installed in
+   $ROOTFS_PATH/usr/bin.  Any incidental data such as wav files, images, or
+   whatever, should be placed in $ROOTFS_PATH/var/lib/lftest/.  Unlike the
+   package install.sh scripts with which you may be familiar, these scripts do
+   not take any arguments.  However, it may use the scripts/functions file to
+   set the standard environment variables.
+
+-- Some useful generic functions are in the "functions" file.  The functions
+   file will be installed in /var/lib/lftest/functions, so include it
+   as such in your lftest_xxx file.
+
+-- Some basic arguments must be supported by the lftest_xxx scripts.
+   Specifically:
+
+   -i: If this option is present, the set_standard_opts function will set the
+    variable INTERACTIVE to 1.  If this argument is supplied, the lftest_xxx
+    script can query for user input to decide if a test has passed.  For
+    example, a test may want to ask if a tone played.  If the user answers yes,
+    the test passes.  If the -i option is not present, only automatic tests
+    should be run.
+

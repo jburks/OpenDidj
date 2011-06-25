@@ -1,0 +1,10 @@
+Device="Lightning"
+Type="Application"
+Name="Firmware Package Name"
+Publisher="LeapFrog, Inc."
+Developer="LeapFrog, Inc.  Firmware Team"
+Version="1.2.3.4567"
+ProductID=0x00040044
+PartNumber="152-XXXX"
+Depends=
+Icon=

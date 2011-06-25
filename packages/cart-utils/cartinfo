@@ -1,0 +1,158 @@
+#!/bin/sh
+
+# This is a simple script that can be used to get info about the cartridge that
+# is currently installed.
+
+HELP="\
+cartinfo [options] \n\
+  -t             Print the type of the current cartridge.  It's one of the \n\
+                 following: \n\
+                   production \n\
+                   development \n\
+                   manufacturing \n\
+                   base \n\
+                   none \n\
+\n\
+ -m              Print the number of the mtd device that should be exposed \n\
+                 as LUN1 over USB.  If nothing is returned, no device should\n\
+                 be exposed.
+\n\
+ -w              Print the read/write mode for this cartridge.  One of: \n\
+                    rw \n\
+                    ro \n\
+\n\
+ -h              help \n\n\
+"
+
+# function for getting cartridge type.  This will eventually be re-written to
+# read gpios instead of inspecting /proc/mtd.
+
+RW_MODE="rw"
+rw_mode() {
+	# Return writable status of cartridge in a form acceptable to "mount"
+
+	cart_type
+
+	RW_MODE="rw"
+	if [ "$CART_TYPE" = "production" ]; then
+		RW_MODE="ro"
+	elif [ "$CART_TYPE" = "development" ]; then
+		# Hmmm... Need to ask driver for WP bit in status register
+		# Don't know how to do this yet...
+		RW_MODE="rw"
+	fi
+}
+
+CART_TYPE="none"
+cart_type() {
+	if [ -e /flags/mfcart ]; then
+		# If there's a cartridge present, we should either see a single 
+		# "Cartridge" partition or a bunch of "prg_*" partitions.  If we 
+		# don't see either of these, no cartridge has been detected.
+
+		CART_INSERTED=`cat /proc/mtd  | grep -w \"Cartridge\"`
+		BASE_INSERTED=`cat /proc/mtd  | grep -w \"prg_Atomic_Boot_Flags\" | cut -d : -f 1`
+		BASE_HAS_EXT=`cat /proc/mtd | grep -w \"EXT\" | cut -d : -f 1`
+		CART_HAS_EXT=`cat /proc/mtd | grep -w \"prg_EXT\" | cut -d : -f 1`
+
+		if [ "$CART_INSERTED" != "" ]; then
+				# CART_TYPE is detected correctly by sysfs: 
+				# "production" or "development"
+				CART_TYPE=`cat /sys/devices/platform/lf1000-nand/cartridge`
+		elif [ "$BASE_INSERTED" != "" ]; then
+			if [ "$BASE_HAS_EXT" = "" -a "$CART_HAS_EXT" = "" ]; then
+				# the base layout has been applied to a cartridge that is not
+			    # big enough to be a manufacturing cartridge.  This is an 
+				# unsupported configuration.
+				CART_TYPE="none"
+
+			elif [ "$BASE_HAS_EXT" = "" -a "$CART_HAS_EXT" != "" ]; then
+				CART_TYPE="manufacturing"
+		
+			elif [ "$BASE_HAS_EXT" != "" -a "$CART_HAS_EXT" = "" ]; then
+				# We're booted from an mfg cart.  The base NAND appears as a 
+				# cart
+				CART_TYPE="base"
+			else
+				#[ "$BASE_HAS_EXT" != "" -a "$CART_HAS_EXT" != ""]; then
+				# This is a special case.  Apparently the cartridge and the 
+				# base NAND are big enough to be mfg carts.  We don't know 
+				# which is physically the base and which is phyically the 
+				# cartridge.  In the end, this will be easy to determine from 
+				# the gpio pins of the cartridge.  For now, we assume that we 
+				# are booted from base.
+				CART_TYPE="manufacturing"
+			fi
+		else
+			CART_TYPE="none"
+		fi
+	else
+		CART_TYPE="`cat /sys/devices/platform/lf1000-nand/cartridge`"
+	fi
+}
+
+USB_MTD_NUM=""
+usb_lun1() {
+
+	cart_type
+
+	if [ "$CART_TYPE" = "production" -o "$CART_TYPE" = "development" ]; then
+		USB_MTD_NUM=`cat /proc/mtd  | grep -w -e \"ubi_Cartridge\" | cut -d : -f 1 | cut -c 4-`
+
+	elif [ "$CART_TYPE" = "base" ]; then
+		# we should be booted from an mfg card in this case.  And the mfg card
+		# should have an ext partition called EXT.  In the rare case that the
+		# base NAND also has an EXT partition, we may have two ubi_EXT
+		# partitions.  In this case we return the first one, which is the one on
+		# the mfg cartridge
+		USB_MTD_NUM=`cat /proc/mtd  | grep -w -e \"ubi_EXT\" | head -1 | cut -d : -f 1 | cut -c 4-`
+		
+	elif [ "$CART_TYPE" = "manufacturing" ]; then
+		# we are booted from base, but want to expose the mfg cart's EXT
+		# partition over usb so that it can be populated with content.  In the
+		# rare case that base NAND has an EXT partition, we will have two
+		# ubi_EXT partitions.  We want the one that is on the mfg cartridge,
+		# which will be the second (i.e., last) one.
+		USB_MTD_NUM=`cat /proc/mtd  | grep -w -e \"ubi_EXT\" | tail -1 | cut -d : -f 1 | cut -c 4-`
+
+	elif [ "$CART_TYPE" = "none" ]; then
+		# There's no cartridge, but the base may have an EXT partition.
+		BASE_HAS_EXT=`cat /proc/mtd | grep \"ubi_EXT\"`
+		if [ "$BASE_HAS_EXT" != "" ]; then
+			USB_MTD_NUM=`cat /proc/mtd  | grep -e \"ubi_EXT\" | cut -d : -f 1 | cut -c 4-`
+		else
+			USB_MTD_NUM=""
+		fi
+	fi
+}
+
+while getopts "thmw" opt; do
+	case "$opt" in
+		"t")
+			cart_type
+			echo $CART_TYPE
+			exit 0
+			;;
+		"m")
+			usb_lun1
+			echo $USB_MTD_NUM
+			exit 0
+			;;
+		"w")
+			rw_mode
+			echo $RW_MODE
+			exit 0
+			;;
+		"h")
+			echo -e "$HELP"
+			exit 0
+			;;
+		*)
+			echo -e "$HELP"
+			exit 1
+			;;
+	esac
+done
+
+echo -e "$HELP"
+exit 1

@@ -1,0 +1,48 @@
+#!/bin/sh
+
+# Make this a comment to speed things up a tiny bit
+#
+# fwcheck-cart 
+# 
+# fwcheck-cart checks if an installed cart has a firmware update and
+# that update is needed.  If a firmware update is in order, fwcheck-cart
+# prints the path of the firmware package to be installed.  Otherwise,
+# it prints nothing.  A firmware update is in order under the following
+# condition:
+# 
+# 1) If a package named firmware-*.lfp exists in /Cart/updates whose
+# version is higher different than the current firmware version.
+
+DEBUG=1
+
+# Need access to /Cart; Give up quickly if not possible
+CART=`cat /sys/devices/platform/lf1000-nand/cartridge`
+if [ "$CART" = "none" ]; then
+	# Quit early
+	echo "fwcheck-cart: no cart installed" 1>&2
+	exit 0;
+fi
+# Got here, a cart was installed.  Make sure it is already mounted
+if ! grep /Cart /proc/mounts 2>&1 >/dev/null; then
+	# Should never need this, but just in case....
+	usbctl -d mass_storage -a disable > /dev/null
+fi
+
+CARTDIR=/Cart/updates
+
+# Find the current version
+CUR_VER=`cat /etc/version`
+
+# Check for newest update
+PKG=`ls $CARTDIR/firmware-*.lfp 2>/dev/null`
+if [ -e "$PKG" ]; then
+	CART_VER=`unzip -p $PKG \*meta.inf | grep -e '\<Version='`
+	if [ "$DEBUG" ]; then echo "fwcheck-cart: $CART_VER vs $CUR_VER" 1>&2; fi
+
+	# Is it newer?
+	if ver "$CART_VER" -gt "$CUR_VER"; then
+		echo $PKG
+	fi
+fi
+
+exit 0

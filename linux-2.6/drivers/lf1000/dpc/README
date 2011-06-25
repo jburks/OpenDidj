@@ -1,0 +1,51 @@
+###############################################################################
+# LF1000 Display Controller (DPC) Driver                                      #
+#                                                                             #
+# 04/28/2007 by Andrey Yurovsky <andrey@cozybit.com>                          #
+###############################################################################
+
+This is the DPC driver documentation.  The DPC driver supports the LF1000's
+Display Controller (DPC) as well as providing general LCD control such as 
+external LCD controller settings and backlight control.
+
+0) Contents:
+   1) Building and Installing
+   2) Creating /dev/dpc Device
+   3) Application Interface
+   4) Debugging
+
+1) Building and Installing
+
+This driver can be built as a module or as part of the kernel by using the
+kernel build system.  Select the CONFIG_L1000_DPC option to build it.  Note 
+that this driver depends on the GPIO, SPI, and PWM drivers.
+
+2) Creating /dev/dpc Device
+
+You may need to create the /dev/dpc device during initial installation.  To do
+so, you must know the DPC's major number (DPC_MAJOR in dpc.h).  For example, 
+to create the device with a major number 252:
+
+$ mknod /dev/dpc c 252 0
+$ chmod a+rw /dev/dpc
+
+3) Application Interface
+
+DPC configuration from user space is done through ioctl() calls.  See
+include/linux/lf1000/dpc_ioctl.h for more information.
+
+4) Debugging
+
+The DPC driver allows the DPC registers to be inspected at any time by
+reading a file in /proc.  This capability is available only if the driver was
+built for a kernel with CONFIG_PROC_FS enabled.  First, ensure that /proc is
+mounted:
+
+$ mount /proc
+
+The /proc/driver directory contains a 'dpc' file.  You may read the file with 
+the 'cat' command, for example:
+
+$ cat /proc/driver/dpc
+
+Refer to the LF1000 data book for DPC register definitions.

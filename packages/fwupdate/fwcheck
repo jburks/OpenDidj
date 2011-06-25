@@ -1,0 +1,63 @@
+#!/bin/sh
+
+HELP="\
+fwcheck \n\
+\n\
+fwcheck checks if the system is ready for a firmware update.  If a firmware \n\
+update is in order, fwcheck prints the path of the firmware package to be \n\
+installed.  Otherwise, it prints nothing.  A firmware update is in order under\n\
+any of the following conditions, which are checked in order:\n\
+1) If a directory named firmware-* exists in the DEVICE_ROOT (i.e., /Didj) and\n\
+contains any files other than the meta.inf file.  If multiple firmware-*\n\
+directories exist, the one with the latest version is installed.\n\
+\n\
+2) If a package named firmware-*.lfp exists in the default DEVICE_ROOT (i.e.,\n\
+/Didj) whose version is different than the current firmware version.  If multiple\n\
+such packages exist, the one with the greatest version is installed.\n\
+\n\
+"
+
+# ensure that usb is disabled
+usbctl -d mass_storage -a disable > /dev/null
+
+BASEDIR=/Didj
+
+# Find the current version
+CURRENT_VERSION=`cat /etc/version | cut -d"-" -f 1`
+CURRENT_SUFFIX=`cat /etc/version | cut -d"-" -f 2`
+CURRENT_VERSION=$CURRENT_VERSION.$CURRENT_SUFFIX
+
+# Evaluate the first case
+UNPACKED_LFPS=`ls -d $BASEDIR/Base/firmware-* 2>/dev/null | grep -v .lfp`
+NEWEST_VERSION=`for p in $UNPACKED_LFPS; do lfpkg -a version $p; done | sort | tail -1`
+if [ ! "$NEWEST_VERSION" = "" -a ! "$CURRENT_VERSION" = "$NEWEST_VERSION" ]; then
+	for p in $UNPACKED_LFPS; do
+		VERSION_MATCH=`lfpkg -a version $p`
+		if [ "$VERSION_MATCH" = "$NEWEST_VERSION" ]; then
+			PKG=$p
+			break
+		fi
+	done
+	echo $PKG
+	exit 0
+fi
+
+# Evaluate the second case:
+# Find the newest LFP in the system
+LFPS=`ls $BASEDIR/firmware-* 2>/dev/null`
+LFPS="$LFPS"
+NEWEST_VERSION=`for p in $LFPS; do lfpkg -a version $p; done | sort | tail -1`
+
+if [ ! "$NEWEST_VERSION" = "" -a ! "$NEWEST_VERSION" = "$CURRENT_VERSION" ]; then
+	for p in $LFPS; do
+		VERSION_MATCH=`lfpkg -a version $p`
+		if [ "$VERSION_MATCH" = "$NEWEST_VERSION" ]; then
+			PKG=$p
+			break
+		fi
+	done
+	echo $PKG
+	exit 0
+fi
+
+exit 0

@@ -1,0 +1,71 @@
+###############################################################################
+# LF1000 GPIO and PWM Driver                                                  #
+#                                                                             #
+# 04/28/2007 by Andrey Yurovsky <andrey@cozybit.com>                          #
+###############################################################################
+
+This is the GPIO driver documentation.
+
+0) Contents:
+   1) Building and Installing
+   2) Creating /dev/gpio Device
+   3) Application Interface
+   4) Debugging
+
+1) Building and Installing
+
+Before building the driver, edit the Makefile and ensure that the KERNELDIR is
+set to the correct path for your LF1000 kernel source.  You may also want to
+check that your cross compiler is in your path.  Finally, adjust the 'install' 
+paths as needed.
+
+Run 'make' to build the module:
+
+$ make
+
+To build the module with debug capability such as register inspection, define
+DEBUG when you build:
+
+$ make DEBUG=1
+
+Once the module, LF1000gpio.ko, is created, copy it to the target (or use 'make
+install').  On the target, insert the module:
+
+$ insmod LF1000gpio.ko
+
+To remove the module,
+
+$ rmmod LF1000gpio
+
+2) Creating /dev/gpio Device
+
+You may need to create the /dev/gpio device during initial installation.  To do
+so, you must know the major number (DPC_MAJOR in gpio.h).  For example, to 
+create the device with a major number 253:
+
+$ mknod /dev/gpio c 253 0
+$ chmod a+rw /dev/gpio
+
+3) Application Interface
+
+GPIO configuration from user space is done through ioctl() calls.  Documentaion
+for this will be available soon.  For now, the example user space utility
+test_gpio is used by the init.sh script to turn on several pins.
+
+4) Debugging
+
+The LF1000gpio driver allows the GPIO registers to be inspected at any time by
+reading a file in /proc.  This capability is available only if the driver was
+built with the DEBUG flag defined (see Section 1).  First, ensure that /proc is
+mounted:
+
+$ mount /proc
+
+The /proc/driver directory contains the following files for GPIO debugging:
+
+You may read the GPIO file with the 'cat' command, for example:
+
+$ cat /proc/driver/gpio
+
+Refer to the LF1000 data book for GPIO register definitions.
+

@@ -1,0 +1,25 @@
+diff -Nur mtd-utils/nanddump.c mtd-utils-new/nanddump.c
+--- mtd-utils/nanddump.c	2007-11-15 17:12:09.000000000 -0800
++++ mtd-utils-new/nanddump.c	2007-11-15 16:40:31.000000000 -0800
+@@ -297,8 +297,20 @@
+ 		}
+ 
+ 		if (badblock) {
+-			if (omitbad)
++
++			if (omitbad) {
++				/* Behave like nandwrite: skip the bad block and
++				 * continue on the other side. 
++				 */
++				if(end_addr - ofs >= bs)
++					end_addr += bs;
++				else {
++					end_addr += (end_addr - ofs);
++					end_addr = end_addr > meminfo.size ?
++						meminfo.size : end_addr;
++				}
+ 				continue;
++			}
+ 			memset (readbuf, 0xff, bs);
+ 		} else {
+ 			/* Read page data and exit on failure */

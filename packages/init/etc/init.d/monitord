@@ -1,0 +1,25 @@
+#!/bin/sh
+# this is a simple example script to demonstrate how the init system works.
+
+case "$1" in
+	start)
+		echo "Starting Application and Power Monitor daemon."
+		monitord
+		if [ $? -gt 0 ]; then
+			echo "...failed"
+		fi
+		;;
+
+	stop)
+		echo "Stopping Application and Power Monitor daemon"
+		PID=`pidof monitord`
+		kill -15 $PID
+		;;
+	*)
+		echo "Usage: /etc/init.d/monitord {start|stop|restart}"
+		exit 1
+		;;
+esac
+
+exit 0
+

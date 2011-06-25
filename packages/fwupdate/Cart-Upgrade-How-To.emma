@@ -1,0 +1,164 @@
+Cart Upgrade How To
+
+h1. Overview
+
+This document describes how to prepare a cartridge (NAND or by extension, OTP) with firmware and other upgrades for Didj.
+
+Versions of LinuxDist newer than 0.28 (Software release 22) support cartridge upgrades for the firmware.  You can test for this on Didj:
+{noformat}
+ver 0.28 -gt `cat /etc/version` || echo Supported
+{noformat}
+
+
+h1. User Experience
+
+When a cartridge with upgrades is installed and Didj booted, the system automatically detects if the upgrades are newer than what is already present on the base.  If so, it will display an "upgrade in progress" screen during the upgrade, followed by automatically powering down the unit.  Powering back up will result in normal operation (sign in screen, etc.) and no further upgrades, since the base packages are now as new as the cartridge ones.
+
+h1. Types of Upgrades Possible
+
+Any package (except the boot loader) that can be upgraded via USB can also be upgraded by cartridge.  In addition, some non-packages can be temporarily overridden by cartridge.
+
+* Boot loader upgrades were deemed impossible -- too risky.
+* LinuxDist (kernel + Root File System) upgrades -- {{firmware-LF_LF1000-X.Y.Z.T.lfp}}
+* Brio and related packages -- Any .lfp that USB would normally download and unzip in the {{/Didj}} directory.
+* Miscellaneous executables -- The PATH environment includes a directory which is on the cartridge.  Placing an binaries in that directory means that they will be found first by the shell (unless full paths are given).  This is the current (as of this writing) PATH setting:
+{noformat}
+export PATH=/Cart/Base/Brio/bin:/Didj/Base/Brio/bin/:/Didj/Base/bin/:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+{noformat}
+* Miscellaneous libraries -- similar to PATH, except these are what are loaded by {{ld}}
+{noformat}
+export LD_LIBRARY_PATH=/Cart/Base/Brio/lib:/Didj/Base/Brio/lib/:/Didj/Base/lib/:/usr/local/lib
+{noformat}
+
+(!) Note: Most Brio libraries _cannot_ be upgraded by merely providing them in {{/Cart/Base/Brio/lib}} because Brio hard-codes many of its library paths.
+
+(!) Note: Upgrade packages can take up significant room on a cartridge (roughly 8MB for LinuxDist, 10MB for Tutorials, 9MB for LocalizedAudio, 8MB for BLT, 7MB for Brio).
+
+h1. How to Place Upgrades On a Cartridge
+
+# Place all package .lfp files in a folder named {{updates}} on the Cartridge.  From the USB, this directory will appear at the top of the {{Cartridge}} volume.  From the serial port, this directory will appear as {{/Cart/updates}}.
+# Create a _manifest.inf_ file using the {{lfpkg}} script.  This script can be run either from the host PC or on the target Didj.
+(!) *Note*: While it is possible to create {{manifest.inf}} by hand, *be _very_ careful* to avoid introducing Windows/DOS line endings (^M) or other formatting errors.  The {{pkupdate-cart}} is written for speed and it is necessarily not very robust.  The best way to create the manifest file is with {{lfpkg}}.
+{quote}
+{{lfpkg -a manifest}} _updates_directory_ > _manifest_file_
+{quote}
+#* On Didj
+{noformat}
+usbctl -d mass_storage -a disable
+lfpkg -a manifest /Cart/updates > /Cart/updates/manifest.inf
+{noformat}
+#* From a Ubuntu Linux PC (or one running under VMWare):
+A copy of {{lfpkg}} can be gotten [here|^lfpkg], but really resides in SVN [here|http://source.leapfrog.com/Software/Brio/Brio2/LinuxDist/packages/lfpkg/lfpkg].
+For example, if the Cartridge volume is attached via USB:
+{noformat}
+# Do this on Didj
+usbctl -d mass_storage -a unlock
+usbctl -d mass_storage -a enable
+{noformat}
+...then...
+{noformat}
+# Do this on Ubuntu
+LinuxDist/packages/lfpkg/lfpkg -a manifest /media/Cartridge/updates > /media/Cartridge/updates/manifest.inf
+# Make sure to unmount to flush writes
+sudo eject /media/Cartridge
+{noformat}
+#* From a PC running Cygwin:
+_answer goes here,_ not.
+
+When you are done, the cartridge might look something like this:
+{noformat}
+/Cart/updates/manifest.inf
+/Cart/updates/Brio-0.1.36.2839.lfp
+/Cart/updates/lib-19.lfp
+/Cart/updates/bin-19.lfp
+/Cart/updates/Fonts-21.lfp
+/Cart/updates/firmware-LF_LF1000-0.26.0.2871.lfp
+/Cart/POW/Levels/SecretRoom_Fire1.bin
+/Cart/POW/Levels/W2L3_POWToodle_dougs.bin
+/Cart/POW/Levels/BonusRound_W4L1.bin
+/Cart/POW/Levels/W1L5_POWToodle.bin
+/Cart/POW/Levels/W2L7_POWToodle.bin
+/Cart/POW/Description.png
+/Cart/POW/Fonts/LeapsterProp0404.ttf
+/Cart/POW/Fonts/LF_DIMAlphaTPX01.ttf
+...
+
+{noformat}
+where {{manifest.inf}} looks like
+{noformat}
+/Didj/Base/bin:19:bin-19.lfp
+/Didj/Base/Brio:0.1.36.2839:Brio-0.1.36.2839.lfp
+/Didj/Base/Fonts:21:Fonts-21.lfp
+/Didj/Base/lib:19:lib-19.lfp
+{noformat}
+
+(!) Notice that the firmware upgrade package _is not listed_ in the manifest.  This is because it uses a different update mechanism than the other packages; {{lfpkg -a manifest}} handles this correctly and omits it from the manifest.
+
+The exact format of the manifest file is given in the [Cartridge Upgrade Design] document.
+
+h1. Testing of Upgrades
+
+Here are some suggestions to Q/A on how they might go about testing this whole upgrade thing.
+
+Here are the packages that can be in "updates" as of 2/15/2008.  The list will change.  They fall in to 2 classes based on how they are handled:
+
+|| Package || Class ||
+| firmware-LF_LF1000-0.31.0.3004.lfp | Kernel + Root File System Class |
+| 0-LanguageArts-24.lfp
+0-MathFacts-24.lfp
+1-Spelling-24.lfp
+2-MathPlus-24.lfp
+Avatar1-24.lfp
+bin-24.lfp
+BLT-24.lfp
+Brio-0.1.46.3005.lfp
+Fonts-24.lfp
+LEG-24.lfp
+LEG_MDL1-24.lfp
+LEG_MDL2-24.lfp
+lib-24.lfp
+LocalizedAudio-24.lfp
+Tutorials-24.lfp
+UniversalArt-24.lfp
+UniversalAudio-24.lfp | All Other Packages Class |
+
+(!) Note that bootstrap-LF_LF1000-X.X.X.X.lfp (the boot loader) packages are always *ignored* by design.
+
+h2. Requirements
+
+h3. To properly test upgrades 
+
+You will need:
+# A way to set the versions back on packages
+#* An base-burning ATAP that installs an older system.  Boot with this installed to completely reset the base unit.
+# The ability to make cartridges with games + combinations of packages.
+
+h3. The kinds of things that must be tested
+
+If we are serious, there are many possible test conditions we must consider:
+
+# Combinations of 0 or more members of each class.  This yields 2 x 3 = 6 combinations at minimum.  For example:
+## No upgrades
+## Upgrade Brio
+## Upgrade Brio and BLT
+## Upgrade firmware
+## Upgrade firmware and Brio
+## Upgrade firmware and Brio and BLT
+# Additionally, we must consider 4 cases for each possible package:
+## "Upgrade" is *older* than what is on base
+## "Upgrade" is *same* than what is on base
+## "Upgrade" is *newer* than what is on base
+## "Upgrade" is a package that is *not yet on base*
+
+(!) This yields a total of 2 x 3 x 4 = *24 cases* to test!
+
+h2. Finding Room (Using an ATAP)
+
+Note that some packages are very large, and some games are large, and the
+two will not fit on a normal NAND cartridge.  We can use an ATAP configured
+as a "development" cartridge:
+
+| On | Off | Off | On | . | Off | On | Off | Off | Off | Off | Off | Off |
+|  1 |  2  |  3  |  4 |   |  1  | 2  |  3  |  4  |  5  |  6  |  7  |  8  |
+
+This should provide you a 256MB NAND cartridge that can hold almost anything.

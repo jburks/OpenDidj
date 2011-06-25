@@ -1,0 +1,183 @@
+#!/bin/sh
+
+# This script prepares the USB device driver.
+
+# The default usb timeout in seconds.
+DEFAULT_USB_TIMEOUT=5
+
+set -e
+
+case "$1" in
+	start)
+
+		# Time to make NAND available over USB.  A number of variables exist
+		# here.  The mass storage can be locked or unlocked, and enabled or
+		# disabled.  See the usbctl command for altering these settings at 
+		# runtime.  Also, the mass storage device can have 1 or 2 LUNs 
+		# depending on any cartridge that may be present.
+
+		UNLOCKED=""
+		ENABLED=""
+
+		if [ -e /flags/usb_mass_storage ]; then
+			set +e
+			UNLOCKED=`grep -w UNLOCKED /flags/usb_mass_storage | head -1`
+			ENABLED=`grep -w ENABLED /flags/usb_mass_storage | head -1`
+			set -e
+		fi
+		
+		# Let's figure out the serial number.  For now, just make it dummy serial
+		SERIAL="0000000000000000"
+		# Someone put a serial number file on the USB.  Ensure it is valid before using it.
+		# This will ALWAYS over-write the current SN if this file has a valid format.  
+		rm -f /Didj/brd.rev
+		BRD_REV="`cat /sys/devices/platform/lf1000-gpio/board_id`"
+		if [ "`length $BRD_REV`" = "1" ] ; then 
+			BRD_REV="0$BRD_REV"
+		fi 
+
+		if [ -f /Didj/UnitID.txt ] ; then
+			VALID=1
+			SERIAL=`cat /Didj/UnitID.txt` 
+			#checks for proper format in file
+			if [ ! "`length $SERIAL`" = "16" -o ! `grep '[0-9A-Fa-f]\{16\}' /Didj/UnitID.txt` ] ; then
+				VALID="IMPROPER FORMAT"		
+			#checks for proper Product ID and Board Rev in file
+			elif [ ! "`cat /Didj/UnitID.txt | cut -c 1-8`" = "00000E$BRD_REV" ] ; then
+				VALID="INVALID PRODUCT ID OR BOARD REV"
+			fi
+
+
+			if [ ! "$VALID" = "1" ] ; then
+				echo "UnitID.txt has $VALID, ignoring"
+				rm -f /Didj/*UnitID.txt* 
+				SERIAL="0000000000000000"
+			else
+				mount -o remount,rw /mfgdata
+				echo "Updating the serial number."
+				mv -f /Didj/UnitID.txt /mfgdata/UnitID.txt
+				rm -f /Didj/UnitID.txt*
+				mount -o remount,ro /mfgdata
+				SERIAL=`cat /mfgdata/UnitID.txt`
+			fi
+		fi 
+
+		# If invalid or no serial number, default to all 0's and UNLOCK USB until we have a valid SN.
+		# This allows loading the SN over USB
+		if [ "$SERIAL" = "0000000000000000" ] ; then
+			if [ -f /mfgdata/UnitID.txt ]; then
+				SERIAL=`cat /mfgdata/UnitID.txt`
+				# check that the format makes sense
+				if [ ! "`length $SERIAL`" = "16" -o ! `grep '[0-9A-Fa-f]\{16\}' /mfgdata/UnitID.txt` ];then
+					echo "Serial Number format is invalid, ignoring"
+					echo "USB will be UNLOCKED until a valid SN is loaded"
+					SERIAL="0000000000000000"
+					UNLOCKED="1"
+					echo $BRD_REV > /Didj/brd.rev
+				# check that the product ID and Rev are valid
+				elif [ ! "`echo $SERIAL | cut -c 1-8`" = "00000E$BRD_REV" ] ; then
+					echo "Serial Number product ID is invalid, ignoring"
+					echo "USB will be UNLOCKED until a valid SN is loaded"
+					SERIAL="0000000000000000"
+					UNLOCKED="1"
+					echo $BRD_REV > /Didj/brd.rev
+				fi
+			else 
+					# no serial number file exists
+					echo "No Serial Number yet. Using default serial number."
+					echo "USB will be UNLOCKED until a valid SN is loaded"
+					UNLOCKED="1"	
+					echo $BRD_REV > /Didj/brd.rev		
+			fi
+		fi
+
+		echo "Serial Number: $SERIAL"
+
+		# Any file system error detected by fsck?
+		NEEDS_REPAIR="0,0"
+		if [ -e /flags/needs_repair ]; then
+			NEEDS_REPAIR="1,1"
+		fi
+				
+		NUM_LUNS=1
+
+		# THIS ALGORITHM GETS FOOLED IF UBI ORDER CHANGES IN KERNEL:
+		#   The FIRST ubi_Brio partition should always be present.  There may be a
+		#   second one if we are booting with a manufacturing cartridge.  But we
+		#   ignore that one for now.  Let's find its mtd number
+		OLD_BRIO_MTD=`cat /proc/mtd  | grep -w -e \"ubi_Brio\" | head -1 | cut -d : -f 1 | cut -c 4-`
+		if [ "$OLD_BRIO_MTD" = "" ]; then
+			echo "Can't find ubi_Brio partition!  Mass Storage is unavailable!"
+			exit 1
+		fi
+
+		# THIS ONE SEARCHES FOR Brio in UBI, and then finds what it mapped to
+		UBI=/sys/class/ubi
+		if [ ! -e $UBI/ubi0 ]; then
+			echo "No UBI volumes!  Mass Storage is unavailable!"
+			exit 1;
+		fi
+		VOL_COUNT=`cat $UBI/ubi0/volumes_count`
+		for i in `seq 0 $VOL_COUNT`; do
+			if [ ! -e $UBI/ubi$i ]; then
+				break; # This should not happen!!
+			fi
+			TEST_NAME=`cat $UBI/ubi$i/mtd_dev_name`
+			if [ "$TEST_NAME" == "Brio" ]; then
+				BRIO_MTD=`cat $UBI/ubi${i}_0/vol_mtd_num`
+				break;
+			fi
+		done
+		# Just test to see if old!=new to vindicate change
+		if [ "$OLD_BRIO_MTD" != "$BRIO_MTD" ]; then
+			echo "Warning: Old BRIO_MTD=$OLD_BRIO_MTD, New=$BRIO_MTD"
+		fi
+		
+		# Detect Read-only carts
+		CART_RO=0
+		RO=`cartinfo -w`
+		if [ "$RO" = "ro" ]; then
+			CART_RO=1
+		fi
+
+		CART_MTD=`cartinfo -m`
+		if [ ! "$CART_MTD" = "" ]; then
+			NUM_LUNS=2
+		fi
+
+		if [ "$NUM_LUNS" = "1" ]; then
+			modprobe g_file_storage luns=1 stall=0 removable=1 locked=1 ro=0\
+				enabled=0,0 file="/dev/mtdblock$BRIO_MTD" serial=$SERIAL\
+				needs_repair=$NEEDS_REPAIR
+		else				
+			modprobe g_file_storage luns=2 stall=0 removable=1 locked=1,1 ro=0,"$CART_RO"\
+				enabled=0,0 file="/dev/mtdblock$BRIO_MTD","/dev/mtdblock$CART_MTD" \
+				serial=$SERIAL needs_repair=$NEEDS_REPAIR
+		fi
+
+		if [ ! "$UNLOCKED" = "" ]; then
+			usbctl -d mass_storage -a unlock
+		fi
+		
+		if [ ! "$ENABLED" = "" ]; then
+			usbctl -d mass_storage -a enable
+		fi
+
+		;;
+
+	stop)
+		modprobe -r g_file_storage
+		;;
+
+	restart)
+		$0 stop
+		$0 start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
+
+exit 0
+

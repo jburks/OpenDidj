@@ -1,0 +1,89 @@
+#!/bin/sh
+echo "CUSTOM bootflags STARTUP SCRIPT FOR MFG ATAP CARDS"
+
+ABF_PART=Atomic_Boot_Flags
+ABF_MOUNT=/flags
+MTD_NUM=`cat /proc/mtd  | grep \"$ABF_PART\" | cut -d : -f 1 | cut -c 4-`
+
+case "$1" in
+	start)
+		echo "Mounting Atomic Boot Flags partition"
+		
+		if [ "$MTD_NUM" = "" ]; then
+			echo "ERROR: $ABF_PART partition does not exist"
+			exit 1;
+		fi
+
+		MOUNTED=`mount | grep -e "^/dev/mtdblock$MTD_NUM "`
+		if [ ! "$MOUNTED" = "" ]; then
+			echo "/dev/mtdblock$MTD_NUM already mounted."
+			exit 1;
+		fi
+		
+		if [ -e $ABF_MOUNT -a ! -d $ABF_MOUNT ]; then
+			echo "Warning: Expecting $ABF_MOUNT to be a directory.  Deleting it."
+			rm -rf $ABF_MOUNT
+		fi
+		
+		# mkdir -p $ABF_MOUNT
+		
+		mount -t jffs2 -o sync,noatime /dev/mtdblock$MTD_NUM $ABF_MOUNT
+		RESULT=$?
+		
+		if [ ! "$RESULT" = "0" ]; then
+			echo "Warning: Cannot mount $ABF_PART.  Reformatting it."
+			flash_eraseall /dev/mtd$MTD_NUM
+			nandwrite /dev/mtd$MTD_NUM /etc/bootflags/bootflags.jffs2
+			mount -t jffs2 -o sync /dev/mtdblock$MTD_NUM $ABF_MOUNT
+			#reboot  #commented out due to special lightning_boot.bin always has mfcart 
+			#exit 0  #commented out due to special lightning_boot.bin always has mfcart 
+			# Assume that this one succeeds
+		fi
+
+		if [ -e $ABF_MOUNT/needs_repair ] ; then
+			# kill -9 `ps | grep file-storage-ga | cut -d 0 -f1` 2> /dev/null
+			echo "Removing needs_repair state and rebooting."
+			echo "0" > /sys/devices/platform/lf1000-usbgadget/gadget/gadget-lun0/needs_repair
+			rm -f $ABF_MOUNT/needs_repair 
+			reboot
+			exit 0
+		fi	
+
+		if [ ! -e $ABF_MOUNT/mfcart ] ; then 
+			echo "Warning: Cannot find required mfcart file.  Creating it."
+			touch $ABF_MOUNT/mfcart
+		fi
+
+		if [ ! -e $ABF_MOUNT/main_app ] ; then 
+			echo "Warning: Cannot find required main_app file.  Creating it."
+			touch $ABF_MOUNT/main_app
+		fi
+
+		if [ ! -e $ABF_MOUNT/usb_mass_storage ] ; then 
+			echo "Warning: Cannot find usb_mass_storage file.  Creating it."
+			echo "UNLOCKED" > $ABF_MOUNT/usb_mass_storage
+		fi
+		
+		if [ ! -e $ABF_MOUNT/rootfs ]; then
+			echo "Warning: Cannot find required rootfs file.  Creating it."
+			# assume RFS0.  Perhaps we chould check /proc/cmdline in the future
+			echo "RFS0" > $ABF_MOUNT/rootfs
+		fi
+		;;
+	
+	stop)
+		echo "Unmounting Atomic Boot Flags partition"
+		if [ "$MTD_NUM" = "" ]; then
+			"ERROR: $ABF_PART partition does not exist"
+			exit 1;
+		fi
+		umount /dev/mtdblock$MTD_NUM
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac
+
+
+exit 0

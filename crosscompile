@@ -1,0 +1,14 @@
+export DIDJ_WORK=$PWD
+export CROSS_COMPILER_ROOT=/opt/RidgeRun/arm-eabi-uclibc
+
+export PATH=$CROSS_COMPILER_ROOT/bin/:$PATH
+export PROJECT_PATH=$DIDJ_WORK
+export CROSS_COMPILE=arm-linux-
+export UBOOT_CROSS_COMPILE=arm-linux-
+export TARGET_MACH=LF_LF1000
+
+export ROOTFS_PATH=$DIDJ_WORK/rootfs/
+export EROOTFS_PATH=$DIDJ/WORK/erootfs/
+export TFTP_PATH=$DIDJ_WORK/tftp/
+export RELEASE_PATH=$DIDJ_WORK/release/
+

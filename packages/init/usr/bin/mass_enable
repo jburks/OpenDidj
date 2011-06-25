@@ -1,0 +1,18 @@
+#!/bin/sh
+
+IS_OPT_MOUNTED=`mount | grep opt | wc -l`
+
+if [ "$IS_OPT_MOUNTED" == "1" ]; then
+	echo "unmount /opt"
+	umount /opt
+	if [ ! $? == 0 ]; then
+		echo "Error: cannot unmount /opt" 1>&2
+		exit 1
+	fi
+fi
+
+modprobe g_file_storage luns=1 stall=0 removable=1 locked=1 ro=0 enabled=0,0 file=/dev/mmcblk0p1 serial=00000E0012114000
+
+usbctl -d mass_storage -a unlock
+usbctl -d mass_storage -a enable
+

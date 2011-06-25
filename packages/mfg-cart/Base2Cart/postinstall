@@ -1,0 +1,87 @@
+#!/bin/sh
+
+#####################################################################
+#   base2cart turns the base unit into a consumer cartridge programmer
+#     Written by Nathan Durrin
+#
+#   Function:  This file will setup the base unit to be able to make 
+#              a consumer NAND cartridge.  It sets the file system r/w,
+#	       installs the S52Cart startup script for automation,
+#              and installs the screens used to display feedback.  
+#
+#   Revision Table..................................................
+#   Date	Rev   Author		Change	 
+#   ----------------------------------------------------------------
+#   12/11/07    001    N.Durrin	        Initial release 
+#   12/17/07    002    N.Durrin		Added update lfpkg and mkbase.sh if needed
+#   02/07/08	003    N.Durrin		Added auto detect to install from ATAP
+#   04/28/08    004    N.Durrin		Added update the gpio-control script
+#
+######################################################################
+
+FILE_REV="004"
+
+#set -e
+mount -o remount,rw /
+#usbctl -d mass_storage -a disable
+
+extsize="`grep mtd8 /proc/mtd | cut -d " " -f2`"
+
+if [ "$extsize" != "00000000" ] ; then
+	MFG_BASE="/opt/mfg" 
+	DIDJ_BASE="/opt/Didj"
+	if [ "`mount | grep -c /dev/mtdblock13`" != "1" ] ; then
+		mount -t jffs2 /dev/mtdblock13 /mnt > /dev/null
+	fi
+	ROOT_BASE="/mnt"
+	mount -t jffs2 /dev/mtdblock10 /mnt2 > /dev/null
+	FLAGS_BASE="/mnt2"
+	FROM_ATAP=1
+	echo "Installing Base2Cart files from the ATAP." 
+else
+	MFG_BASE="/opt/prg_mfg" 
+	DIDJ_BASE="/Didj"
+	ROOT_BASE="/"
+	FLAGS_BASE="/flags"
+	FROM_ATAP=0
+	echo "Installing Base2Cart files to the unit." 	
+fi
+
+
+if [ -e $DIDJ_BASE/Base/Base2Cart/lfpkg ] ; then
+	cp -f $DIDJ_BASE/Base/Base2Cart/lfpkg $ROOT_BASE/usr/bin
+	cp -f $DIDJ_BASE/Base/Base2Cart/lfpkg /usr/bin
+fi
+
+if [ "$FROM_ATAP" = "0" ] ; then 
+	lfpkg -a validate $DIDJ_BASE/Base/Base2Cart
+	if [ ! "`echo $?`" = "0" ] ; then
+		echo "ERROR: Package file did not unpack correctly or is corrupt." 
+		exit 1
+	fi
+	rm -rf /Didj/Base2Cart*.lfp
+fi
+
+
+
+
+cp -f $DIDJ_BASE/Base/Base2Cart/*.png $ROOT_BASE/var/screens
+touch $FLAGS_BASE/cart_rw
+touch $FLAGS_BASE/main_app
+cp -f $DIDJ_BASE/Base/Base2Cart/S52Cart $ROOT_BASE/etc/init.d/Cart
+rm -f $ROOT_BASE/etc/rc.d/S52*
+rm -f $ROOT_BASE/etc/rc.d/S53*
+cp -s /etc/init.d/Cart $ROOT_BASE/etc/rc.d/S52Cart
+if [ -e $DIDJ_BASE/Base/Base2Cart/gpio-control ] ; then
+	cp -f $DIDJ_BASE/Base/Base2Cart/gpio-control $ROOT_BASE/usr/bin
+fi
+mkdir -p $DIDJ_BASE/Cart
+
+if [ "`mount | grep -c /mnt`" -ge "1" ] ; then
+	umount /mnt > /dev/null
+	umount /mnt2 > /dev/null
+	exit 0
+fi
+
+rm -rf $DIDJ_BASE/Base/Base2Cart
+exit 0

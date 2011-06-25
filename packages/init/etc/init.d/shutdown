@@ -1,0 +1,14 @@
+#!/bin/sh
+
+echo "Shutting down system"
+
+# run shutdown scripts in the rc.d directory.  
+for f in `ls /etc/rc.d/K* | sort`; do
+	$f stop
+done
+
+# mount file systems
+umount -a
+
+# XXX: power off the screen
+#mlc-control /dev/mlc s enable off

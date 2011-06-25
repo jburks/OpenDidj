@@ -1,0 +1,34 @@
+#!/bin/sh
+
+
+case "$1" in
+	start)
+
+		if [ -e /Unlock ] ; then 
+			EVENT="`cat /Unlock`"
+			if [ $EVENT -gt "1" ] ; then 
+				usbctl -d mass_storage -a unlock
+				EVENT=`expr $EVENT - 1`
+				mount -o remount,rw /
+                                echo "USB will be Unlocked $EVENT more times."
+                                echo $EVENT > /Unlock
+                        else 
+                                echo "Last time USB will be unlocked."
+				usbctl -d mass_storage -a unlock
+				mount -o remount,rw /
+                                rm -f /Unlock
+				rm -f /etc/rc.d/S55Unlock
+				rm -f /etc/init.d/Unlock
+                        fi
+		fi
+		;;
+	stop)
+		echo "Stopping Unlock script."
+		;;
+	*)
+		echo "Usage: /etc/init.d/Unlock {start|stop}"
+		exit 1
+		;;
+esac
+
+exit 0

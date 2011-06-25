@@ -1,0 +1,49 @@
+# This file implements some common utility functions for the lftest framework.
+
+# Call this function with $* to pass your scripts arguments in.
+set_standard_opts() {
+	export INTERACTIVE=0
+	while getopts "i" opt; do
+		case "$opt" in
+			"i")
+				export INTERACTIVE=1
+				;;
+			*)
+				echo "ignoring option $opt"
+				;;
+		esac
+	done
+}
+
+# This function runs a command and reports whether it passed or not
+# $1 -> command to run
+run_test_non_interactive() {
+	$*
+	if [ "$?" -eq "0" ]; then
+		echo "$CLASS: $TEST: PASSED"
+	else
+		echo "$CLASS: $TEST: FAILED"
+	fi
+}
+
+# This function asks the user if a test passed and reports accordingly.
+run_test_interactive() {
+	if [ "$INTERACTIVE" == "0" ]; then
+		return
+	fi
+
+	while read -p "$* [Y|n|s=skip]" ans; do
+		if [ "$ans" == "y" -o "$ans" == "Y" -o "$ans" == "" ]; then
+			echo "$CLASS: $TEST: PASSED"
+			break;
+		elif [ "$ans" == "n" -o "$ans" == "N" ]; then
+			echo "$CLASS: $TEST: FAILED"
+			break;
+		elif [ "$ans" == "s" -o "$ans" == "S" ]; then
+			echo "$CLASS: $TEST: SKIPPED"
+			break;
+		else
+			echo "Please answer y or n."
+		fi
+	done
+}

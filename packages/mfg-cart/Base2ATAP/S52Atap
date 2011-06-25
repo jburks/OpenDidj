@@ -1,0 +1,584 @@
+#!/bin/sh
+#####################################################################
+#   S53Atap file for making the base unit program ATAP manufacturing cartridges
+#     Written by Nathan Durrin
+#
+#   Function:  This file will make flash the ATAP cartridge from the 
+#              base unit.  It will force an erase then reboot.  
+#	       Then it will check for the latest firmware files as in 
+#              the /Didj/ATAP/FW_packages directory, unpack if neccessary,
+#	       then burn the cartridge and automatically configure it
+#              to update a formfactor unit automatically (with the files
+#              available in the /Didj/ATAP directory.
+#
+#   Revision Table..................................................
+#   Date	Rev   Author		Change	 
+#   ----------------------------------------------------------------
+#   12/06/07    001    N.Durrin	        Initial release with rev box
+#   12/17/07	002    N.Durrin		Added validation to file unpacking
+#   12/21/07    003    N.Durrin		Added screen text for information
+#   01/08/08    004    N.Durrin		Fixed erasing directory and removed set -e
+#   01/17/08    006    N.Durrin		added flash erase function
+#   01/18/08    007    N.Durrin		added serialization authorization preservation
+#   01/22/08	008    N.Durrin		added mkbase.sh logging and fail on mismatch
+#   01/23/08	009    N.Durrin		fixed mkbase.sh logging and fail on error
+#   01/28/08	010    N.Durrin		Made script so you can setup base as DidjMfgTester by putting the 
+#					   DidjMfgTest-x.x.lfp in the /Didj/ATAP/FW_packages directory.
+#					Added auto update the mkbase and lfpkg tools if exist in /Didj/ATAP
+#   01/29/08	011    N.Durrin		Added remounting file system to rw so scripts can be auto-updated
+#   02/05/08  	012    N.Durrin		Added self updating if S52Atap file exists in /Didj
+#   02/07/08	013    N.Durrin		Updated postinstall to be able to install from ATAP
+#   02/11/08	015    N.Durrin		Decoupled the payload firmware from the ATAP's firmware
+#					Atap will get burned to it the firmware from the Atap_FW directory instead of the FW_packages directory
+#   03/25/08	016    N.Durrin		Changed FW version on ATAP
+#   03/26/08    017    N.Durrin	        Added bootflags startup script to postinstall and Atap scripts
+#					Changed firmware version back to original
+#   04/10/08    018    N.Durrin		Change to special ATAP firmware and added updated base unit to it for stability
+#   04/15/08	019    N.Durrin		Added USB check to abort, added check expected mounted before creating ATAP.
+#   05/08/08    020    N.Durrin		Added self updating if files exist, added nand scrubber
+#   06/24/08	021    N.Durrin		Added preservation of Authorization files on the ATAP. 
+#   08/07/08    022    N.Durrin		Added removing the needs_repair flag if it gets turned on
+#
+######################################################################
+
+FILE_REV="022"
+
+root0mnt="/dev/mtdblock`grep prg_Linux_RFS0 /proc/mtd | cut -d: -f1 | cut -c 4-`"
+root1mnt="/dev/mtdblock`grep prg_Linux_RFS1 /proc/mtd | cut -d: -f1 | cut -c 4-`"
+mfgdatamnt="/dev/mtdblock`grep prg_Manufacturing_Data /proc/mtd | cut -d: -f1 | cut -c 4-`"
+
+set_screen () {
+	SCREEN_NAME=$1
+
+	layer-control /dev/layer0 s enable off
+	layer-control /dev/layer0 s format B8G8R8
+	layer-control /dev/layer0 s hstride 3
+	layer-control /dev/layer0 s vstride 960
+	layer-control /dev/layer0 s position 0 0 320 240
+	layer-control /dev/layer0 s dirty
+	imager /dev/layer0 /var/screens/$SCREEN_NAME
+	layer-control /dev/layer0 s enable on
+	layer-control /dev/layer0 s dirty
+	
+	return 0
+}
+
+# Function for erasing flash (all but mfgdata partition).
+erase_flash () {
+	for part in `mount | grep /opt | cut -d " " -f3` ; do
+#		echo "unmounting $part"		
+		umount $part			
+	done
+
+	mount -t jffs2 $root0mnt /mnt > /dev/null
+	if [ $? -eq 0 ] ; then
+		if [ -e /mnt/.uidts ] ; then 
+			mv /mnt/.uidts /flags
+		fi
+		umount /mnt
+	fi
+	#mount -t jffs2 $root1mnt /mnt > /dev/null
+	#if [ $? -eq 0 ] ; then	
+	#	if [ -e /mnt/.uidts ] ; then 
+	#		mv /mnt/.uidts /flags
+	#	fi
+	#	umount /mnt
+	#fi	
+	for part in `cat proc/mtd | grep prg_ | cut -d : -f1` ; do 
+		if [ ! "$part" = "`cat proc/mtd | grep prg_Manufacturing | cut -d : -f1`" ] ; then 
+			MTD_DEV="`echo $part | cut -d d -f2`"
+			if [ "`mount | grep -c /dev/mtdblock$MTD_DEV`" = "1" ] ; then
+				umount /dev/mtdblock$MTD_DEV > /dev/null
+			fi
+			echo "erasing /dev/$part"
+			flash_eraseall /dev/$part > /dev/null
+		else
+			echo "Skipping mfgdata partition"		
+		fi
+	done
+	touch /flags/flash_ok
+	return 0
+}
+
+# This function will scrub the bad blocks on the NAND
+scrub_flash () {
+	for part in `mount | grep /opt | cut -d " " -f3` ; do
+#		echo "unmounting $part"		
+		umount $part			
+	done
+
+	mount -t jffs2 $root0mnt /mnt > /dev/null
+	if [ $? -eq 0 ] ; then
+		if [ -e /mnt/.uidts ] ; then 
+			mv -f /mnt/.uidts /flags
+		fi
+		umount /mnt
+	fi
+
+	mount -t jffs2 $mfgdatamnt /mnt2 > /dev/null
+	if [ $? -eq 0 ] ; then
+		if [ -e /mnt2/.snAuthor ] ; then 
+			mv -f /mnt2/.snAuthor /flags
+		fi
+		umount /mnt2
+	fi
+	#mount -t jffs2 $root1mnt /mnt > /dev/null
+	#if [ $? -eq 0 ] ; then	
+	#	if [ -e /mnt/.uidts ] ; then 
+	#		mv /mnt/.uidts /flags
+	#	fi
+	#	umount /mnt
+	#fi	
+	for part in `cat proc/mtd | grep prg_ | cut -d : -f1` ; do 
+		#if [ ! "$part" = "`cat proc/mtd | grep prg_Manufacturing | cut -d : -f1`" ] ; then 
+			MTD_DEV="`echo $part | cut -d d -f2`"
+			if [ "`mount | grep -c /dev/mtdblock$MTD_DEV`" = "1" ] ; then
+				umount /dev/mtdblock$MTD_DEV > /dev/null
+			fi
+			echo "scrubbing /dev/$part"
+			nandwipebbt /dev/$part > /dev/null
+			nandscrub /dev/$part -e > /dev/null
+		#else
+		#	echo "Skipping mfgdata partition"		
+		#fi
+	done
+	flash_eraseall /dev/mtd11 > /dev/null
+	erase_flash
+	return 0
+}
+
+##reads the button requested to see if it is pressed or not
+##returns 1 if button is pressed, returns 0 if not.  Returns 99 and prints help if something was wrong with function call.
+#read_button () {
+#	BUTTON_NAME=$1
+#	SUPPORTED_BUTTONS="a b up down right left"
+#	BUTTON_CONFIGS="a:8 b:9 up:2 down:3 right:1 left:0"
+#
+#	print_help() {
+#		echo "Usage: $0 <button>"
+#		echo "button can be any of:" $SUPPORTED_BUTTONS
+#		echo "prints either pressed unpressed depending on button status."
+#	}
+#
+#	if [ "$BUTTON_NAME" = "" ]; then
+#		print_help
+#		return 99
+#	fi
+#
+#	BUTTON=""
+#	for b in $BUTTON_CONFIGS; do
+#		B=`echo $b | cut -d : -f 1`
+#		if [ "$B" = "$BUTTON_NAME" ]; then
+#			BUTTON=$B
+#			GPIO=`echo $b | cut -d : -f 2`
+#			break
+#		fi
+#	done
+#
+#	if [ "$BUTTON" = "" ]; then
+#		print_help
+#		return 99
+#	fi
+#
+#	NOT_PRESSED=`gpio-control /dev/gpio invalue 2 $GPIO | grep value | cut -d = -f 2`
+#
+#	if [ "$NOT_PRESSED" = 1 ]; then
+#		echo unpressed
+#		return 0
+#	elif [ "$NOT_PRESSED" = 0 ]; then
+#		echo pressed
+#		return 0
+#	else
+#		print_help
+#		return 99
+#	fi	
+#}
+
+
+
+# set -e
+case "$1" in
+	start)
+		echo "Starting ATAP flash script revision $FILE_REV."
+		set_screen "Atap_1.png"
+
+		if [ -e /flags/needs_repair ] ; then
+			# kill -9 `ps | grep file-storage-ga | cut -d 0 -f1` 2> /dev/null
+			echo "Removing needs_repair state and rebooting."
+			echo "0" > /sys/devices/platform/lf1000-usbgadget/gadget/gadget-lun0/needs_repair
+			rm -f /flags/needs_repair 
+			reboot
+			exit 0
+		fi	
+
+		# if USB is connected, skip update and allow access to USB
+		echo "checking if the USB is plugged in." > /tmp/UDStat
+		USB_CONNECTED=`cat /sys/devices/platform/lf1000-usbgadget/vbus`		
+		if [ $USB_CONNECTED = 1 ] ; then 
+			echo "USB connected, aborting base flash"
+			# display USB Connected screen				
+			set_screen "DOWNLOAD_IN_PROGRESS.png"
+			usbctl -d mass_storage -a enable
+			usbctl -d mass_storage -a unlock
+			exit 0
+		fi
+	
+
+		# kill any application running.
+		MAIN_PID=""
+		if [ -e /tmp/main_app_pid ] ; then
+			MAIN_PID=`cat /tmp/main_app_pid`
+			kill -9 $MAIN_PID
+		fi
+		
+		usbctl -d mass_storage -a disable > /dev/null
+		
+		reboot_stat=0
+		if [ -e /Didj/bootstrap-LF_LF1000*_ATAP.lfp ] ; then
+			echo "Updating the unit Bootloader."
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "Updating Bootloader."
+			blupdate
+			RESULT=$?
+			if [ $RESULT != "0" ] ; then 
+				echo "FIRMWARE update on unit Failed, reflashing the unit may be necessary."
+				echo "ERROR: FIRMWARE update on unit Failed, reflashing the unit may be necessary." > /Didj/ERROR.log
+				usbctl -d mass_storage -a enable
+				usbctl -d mass_storage -a unlock
+				set_screen "Atap_FAIL.png"
+				exit 1
+			fi
+			echo "Unit's firmware was updated to special ATAP version"
+			rm -f /Didj/bootstrap-LF_LF1000*_ATAP.lfp
+			reboot_stat=1
+			#exit 0	
+		fi
+
+		if [ -e /Didj/kernel.bin -a -e /Didj/kernel.md5 ] ; then 
+			echo "Updating kernel to special mfg kernel"
+			EXPECTED_KERNEL_SUM="`cat /Didj/kernel.md5`"
+			flash_eraseall /dev/mtd3 > /dev/null
+			nandwrite -p /dev/mtd3 /Didj/kernel.bin > /dev/null
+			FILE_SIZE=`ls -l /Didj/kernel.bin | tr -s "" " " | cut -d" " -f5`
+			FILE_SUM=`nanddump -m -l $FILE_SIZE /dev/mtd3 2> /dev/null`
+			if [ ! "$FILE_SUM" = "$EXPECTED_KERNEL_SUM" ]; then
+				echo "kernel flash failed.  Failing."
+				exit 1
+			fi
+			echo "Special Kernel install successful."
+			rm -f /Didj/kernel.bin
+			rm -f /Didj/kernel.md5
+			reboot
+			exit 0
+		fi
+
+		if [ "$reboot_stat" = "1" ] ; then
+			reboot
+			exit 0
+		fi
+
+		# for manufacturing mode, remount rootfs as read/write                          
+		if [ -e /flags/mfcart ]; then                                                   
+		        mount -o remount,rw /                                                   
+		else 
+			touch /flags/mfcart
+			touch /flags/main_app
+			echo "UNLOCKED" > /flags/usb_mass_storage
+		        mount -o remount,rw /    	        
+			if [ -e /flags/needs_repair ] ; then
+				kill -9 `ps | grep file-storage-ga | cut -d 0 -f1` 2> /dev/null
+				rm -f /flags/needs_repair 
+				reboot
+				exit 0
+			fi       
+		        mount -o remount,rw /
+			# reboot
+		fi
+
+		if [ -e /flags/needs_repair ] ; then
+			kill -9 `ps | grep file-storage-ga | cut -d 0 -f1` 2> /dev/null
+			rm -f /flags/needs_repair 
+			reboot
+			exit 0
+		fi	
+
+		echo "disabling USB for payload update" > /tmp/UDStat
+		usbctl -d mass_storage -a disable > /dev/null
+
+		if [ `mount | grep -c " /Didj"` != "1" ] ; then
+			echo "mounting /Didj." > /tmp/UDStat
+			echo "ERROR: /Didj is not mounted."
+			echo "ERROR: /Didj is not mounted." > /Didj/ERROR.log
+			set_screen "Atap_FAIL.png"
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "ERROR: /Didj can not be mounted."
+			exit 1
+		fi
+
+		if [ -e /Didj/S52Atap ] ; then 
+			echo "Updating the S52Atap."
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "Updating S52Atap."
+			mv /Didj/S52Atap /etc/init.d/Atap
+		fi
+
+		if [ -e /Didj/bootflags ] ; then 
+			echo "Updating the bootflags script."
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "Updating bootflags."
+			mv /Didj/bootflags /etc/init.d
+		fi
+
+		if [ -e /Didj/lfpkg ] ; then 
+			echo "Updating the lfpkg tool."
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "Updating lfpkg."
+			mv -f  /Didj/lfpkg /usr/bin
+		fi
+
+		if [ -e /Didj/ubi ] ; then 
+			echo "Updating the ubi startup script."
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "Updating ubi."
+			mv -f  /Didj/ubi /etc/init.d
+		fi
+
+
+		if [ "`ls /Didj | grep -c .png`" -ge "1" ] ; then 
+			echo "Copying status png screens."
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "Updating screens."
+			mv /Didj/*.png /var/screens
+		fi
+
+		if [ -e /Didj/mkbase.sh ] ; then 
+			echo "Updating the mkbase.sh."
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "Updating mkbase.sh."
+			mv /Didj/mkbase.sh /usr/bin
+		fi
+
+		if [ -e /Didj/gpio-control ] ; then 
+			echo "Updating the gpio-control file"
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "Updating gpio-control file."
+			mv /Didj/gpio-control /usr/bin
+		fi
+
+		if [ "`ls /Didj | grep -c nand`" -ge "1" ] ; then 
+			echo "Copying nand tools to unit."
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "Updating nand tools."
+			mv /Didj/nand* /usr/bin
+		fi
+
+
+		if [ "0" = `grep -c prg_LF1000_uniboot /proc/mtd` ] ; then
+			echo "Target partitions not present. Aborting ..."
+			set_screen "Atap_FAIL.png"
+			echo "ERROR: No ATAP cartridge found to program." > /Didj/ERROR.log
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "ERROR: No ATAP cartridge found."	
+			usbctl -d mass_storage -a enable
+			usbctl -d mass_storage -a unlock
+			exit 1
+		fi
+
+#		# check if button B is pressed indicating user wants to directly run mfg test if available
+#		PRESSED=`read_button a`
+#		if [ "$PRESSED" = "pressed" ] ; then
+#			usbctl -d mass_storage -a disable > /dev/null
+#			echo "Button A is pressed, Will perform NAND Scrub function."
+#			scrub_flash
+#			reboot
+#			exit 0
+#		fi
+
+
+		if [ `mount | grep -c /opt/Didj` != "1" ] ; then
+			echo "ERROR: /opt/Didj is not mounted.  Rebuilding and rebooting."
+			echo "ERROR: /opt/Didj is not mounted.  Rebuilding and rebooting." > /Didj/ERROR.log
+			set_screen "Atap_FAIL.png"
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "ERROR: /opt/Didj is not mounted."
+			scrub_flash			
+			#erase_flash
+			reboot
+			exit 1
+		fi
+
+
+		if [ `mount | grep -c /opt/prg_mfg` != "1" ] ; then
+			echo "writing files to /opt/prg_mfg." > /tmp/UDStat
+			echo "ERROR: /opt/prg_mfg is not mounted."
+			echo "ERROR: /opt/prg_mfg is not mounted." > /Didj/ERROR.log
+			set_screen "Atap_FAIL.png"
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "ERROR: /opt/prg_mfg can not be mounted."
+			scrub_flash			
+			#erase_flash
+			reboot
+			exit 1
+		fi
+
+		
+
+		if [ ! -e /flags/flash_ok ]; then 
+			
+			set_screen "Atap_1.png"
+			
+			#scrub and erase flash first	
+			cd
+			scrub_flash			
+			#erase_flash
+			touch /flags/flash_ok # history flag to know we have erased flash
+			touch /tmp/reboot
+			reboot	
+			exit 0		
+						
+		else 
+			set_screen "Atap_2.png"
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "S52ATAP v. $FILE_REV."	
+			#echo "checking USB file system" > /tmp/UDStat
+			#usbctl -d mass_storage -a fsck
+			if [ -d /Didj/ATAP ] ; then 
+				BASE_PATH="/Didj/ATAP"
+			elif [ -d /Didj/atap ] ; then 
+				BASE_PATH="/Didj/atap"
+			else 
+			     	echo "ERROR: No ATAP files found.  Please load the files in the USB partition in ATAP directory."
+				set_screen "Atap_FAIL.png"
+			     	echo "ERROR: No ATAP files found.  Please load the files in the USB partition in ATAP directory." > /Didj/ERROR.log
+				drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+				drawtext /dev/layer0 /test/monotext8x16.rgb "ERROR: No ATAP files found."	
+				usbctl -d mass_storage -a enable
+				usbctl -d mass_storage -a unlock
+				exit 1
+			fi
+
+			#if [ -e $BASE_PATH/mkbase.sh ] ; then 
+			#	echo "Updating the mkbase.sh."
+			#	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			#	drawtext /dev/layer0 /test/monotext8x16.rgb "Updating the mkbase.sh."
+			#	cp -rf $BASE_PATH/mkbase.sh /usr/bin
+			#fi
+
+			#if [ -e $BASE_PATH/lfpkg ] ; then 
+			#	echo "Updating the lfpkg tool."
+			#	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			#	drawtext /dev/layer0 /test/monotext8x16.rgb "Updating the lfpkg tool."
+			#	cp -rf $BASE_PATH/lfpkg /usr/bin
+			#fi
+
+			if [ -d /Didj/Atap_FW ] ; then 
+				ATAP_FW_PATH="//Didj/Atap_FW/"
+			elif [ -d $BASE_PATH/Atap_FW ] ; then
+				ATAP_FW_PATH="$BASE_PATH/Atap_FW/"
+			else 
+				ATAP_FW_PATH="$BASE_PATH/FW_packages/"
+			fi
+
+			for LFP in `find $ATAP_FW_PATH -name "*LF1000*.lfp"` ; do
+			
+				CUR_LFP="`echo $LFP | cut -d/  -f5 | cut -d- -f1 `"
+				CUR_BRD="`echo $LFP | cut -d/  -f5 | cut -d- -f2 `"
+				BASE="/Didj"
+				DIR=""
+				ACTION=""
+				PKG="`echo $LFP `"i
+				META_VERSION=" `echo $LFP | cut -d- -f3 | tr -d lfp ` "
+
+
+				echo "Latest $CUR_LFP-$CUR_BRD version is $META_VERSION"
+				drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+				drawtext /dev/layer0 /test/monotext8x16.rgb "$CUR_LFP-$CUR_BRD v. $META_VERSION"		
+
+				if [ -e /Didj/Base/$CUR_LFP-$CUR_BRD/meta.inf ] ; then		
+					CUR_VER="`cat /Didj/Base/$CUR_LFP-$CUR_BRD/meta.inf | grep '\<Version' | cut -d\\" -f2`" 
+					echo "Your current ATAP's $CUR_LFP-$CUR_BRD verion is $CUR_VER."
+					if [ "`echo $CUR_VER | tr -d .- `" = "`echo $META_VERSION | tr -d .- `" ] ; then 
+						echo "Your $CUR_LFP-$CUR_BRD payload is up to date"
+					else 
+						rm -Rf /Didj/Base/$CUR_LFP-$CUR_BRD*
+
+						echo "Updating $CUR_LFP-$CUR_BRD to version $META_VERSION"
+						lfpkg -a install -b $BASE \ $LFP
+						lfpkg -a validate $BASE/Base/$CUR_LFP-$CUR_BRD > /Didj/ERROR.log
+						if [ ! "`echo $?`" = "0" ] ; then 
+							echo "ERROR updating to new $CUR_LFP-$CUR_BRD packages from $ATAP_FW_PATH"
+			     				set_screen "Atap_FAIL.png"
+						     	echo "ERROR updating to new $CUR_LFP-$CUR_BRD packages from $ATAP_FW_PATH.  Package files may be corrupt." >> /Didj/ERROR.log
+							drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+							drawtext /dev/layer0 /test/monotext8x16.rgb "ERROR: $CUR_LFP-$CUR_BRD package corrupt."	
+							usbctl -d mass_storage -a enable
+							usbctl -d mass_storage -a unlock
+							exit 1
+						fi
+					fi					 
+				else				
+					echo "Installing $CUR_LFP-$CUR_BRD version $META_VERSION on ATAP cartridge"
+					drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+					drawtext /dev/layer0 /test/monotext8x16.rgb "Installing $CUR_LFP-$CUR_BRD v. $META_VERSION"	
+					lfpkg -a install -b $BASE \ $LFP
+					lfpkg -a validate $BASE/Base/$CUR_LFP-$CUR_BRD > /Didj/ERROR.log
+					if [ ! "`echo $?`" = "0" ] ; then 
+						echo "ERROR installing new $CUR_LFP-$CUR_BRD packages from $ATAP_FW_PATH"
+						set_screen "Atap_FAIL.png"
+						echo "ERROR installing new $CUR_LFP-$CUR_BRD packages from $ATAP_FW_PATH.  Package may be corrupt." >> /Didj/ERROR.log
+						drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+						drawtext /dev/layer0 /test/monotext8x16.rgb "ERROR: $CUR_LFP-$CUR_BRD package corrupt."	
+						usbctl -d mass_storage -a enable
+						usbctl -d mass_storage -a unlock
+						exit 1
+					fi
+				fi
+			done
+
+		
+			#flash_ok file exists meaning we have already erased the flash and ready to burn again
+			rm -f /flags/flash_ok # remove file 
+			# load stage 2 screen
+			set_screen "Atap_3.png"
+			echo "Running mkbase.sh"
+			(mkbase.sh; echo $? > /tmp/result) | tee /tmp/ERROR.log
+			if [ ! "`cat /tmp/result`" = "0" ] ; then 
+				set_screen "Atap_FAIL.png"
+				mv /tmp/ERROR.log /Didj/ERROR.log
+				echo "mkbase returned error" >> /Didj/ERROR.log
+				drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+				drawtext /dev/layer0 /test/monotext8x16.rgb "ERROR: mkbase returned error."	
+				usbctl -d mass_storage -a enable
+				usbctl -d mass_storage -a unlock
+				exit 1
+			fi 
+ 		fi
+
+
+		if [ -e /flags/.snAuthor ] ; then 
+			mount -t jffs2 $mfgdatamnt /mnt2 > /dev/null
+			if [ $? -eq 0 ] ; then
+				mv -f /flags/.snAuthor /mnt2
+				umount /mnt2
+			else
+				echo "WARNING: Authorization files could not be preserved."
+			fi
+		fi
+
+		set_screen "Atap_PASS.png"
+		rm -f /Didj/ERROR.log
+		poweroff
+		exit 0
+		;;
+
+	stop)
+		echo "Stopping base Atap script."
+		#rm -f /flags/flash_ok
+		;;
+	*)
+		echo "Usage: /etc/init.d/Atap {start|stop}"
+		exit 1
+		;;
+esac
+
+exit 0

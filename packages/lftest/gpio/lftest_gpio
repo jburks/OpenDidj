@@ -1,0 +1,38 @@
+#!/bin/sh
+
+. /var/lib/lftest/functions
+
+# parse args
+set_standard_opts $*
+
+CLASS="gpio"
+
+# read a button gpio
+CMD="gpio-control /dev/gpio invalue 2 22 > /dev/null"
+TEST="read gpio" run_test_non_interactive $CMD
+
+# set an LED to gpio function
+CMD="gpio-control /dev/gpio func 0 31 0 > /dev/null"
+TEST="set gpio func" run_test_non_interactive $CMD
+
+# set the LED gpio to high (LED off)
+CMD="gpio-control /dev/gpio outvalue 0 31 1 > /dev/null"
+TEST="set LED off" run_test_non_interactive $CMD
+
+# ask user if LED is off
+QUESTION="Is LED D1 off?"
+TEST="LED is off" run_test_interactive $QUESTION
+
+# enable the LED gpio
+CMD="gpio-control /dev/gpio outenable 0 31 1 > /dev/null"
+TEST="enable LED gpio" run_test_non_interactive $CMD
+
+# set the LED gpio to low (LED on)
+CMD="gpio-control /dev/gpio outvalue 0 31 0 > /dev/null"
+TEST="set LED on" run_test_non_interactive $CMD
+
+# ask user if LED is off
+QUESTION="Is LED D1 on?"
+TEST="LED is on" run_test_interactive $QUESTION
+
+exit 0

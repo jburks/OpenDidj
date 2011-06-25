@@ -1,0 +1,120 @@
+#!/bin/sh
+
+#####################################################################
+#   base2ATAP turns the base unit into an ATAP cartridge programmer
+#     Written by Nathan Durrin
+#
+#   Function:  This file will setup the base unit to be able to make 
+#              an automated ATAP cartridge.  It sets the file system r/w,
+#	       installs the S52Atap startup script for automation,
+#              and installs the screens used to display feedback.  
+#
+#   Revision Table..................................................
+#   Date	Rev   Author		Change	 
+#   ----------------------------------------------------------------
+#   12/11/07    001    N.Durrin	        Initial release 
+#   12/17/07    002    N.Durrin		Added update lfpkg and mkbase.sh if needed
+#   02/07/08	003    N.Durrin		Added auto detect to install from ATAP
+#   02/08/08	004    N.Durrin		Added update mkbase and lfpkg
+#   02/19/08	005    N.Durrin		Added updating both rootfs systems to run scripts
+#
+######################################################################
+
+FILE_REV="005"
+
+#set -e
+mount -o remount,rw /
+#usbctl -d mass_storage -a disable
+
+extsize="`grep mtd8 /proc/mtd | cut -d " " -f2`"
+
+if [ "$extsize" != "00000000" ] ; then #Booted from ATAP
+	MFG_BASE="/opt/mfg" 
+	DIDJ_BASE="/opt/Didj"
+	if [ "`mount | grep -c /dev/mtdblock13`" != "1" ] ; then
+		mount -t jffs2 /dev/mtdblock13 /mnt > /dev/null
+	fi
+	ROOT_BASE="/mnt"
+	mount -t jffs2 /dev/mtdblock15 /mnt2 > /dev/null
+	ROOT2_BASE="/mnt2"
+	mount -t jffs2 /dev/mtdblock10 /Cart > /dev/null
+	FLAGS_BASE="/Cart"
+	FROM_ATAP=1
+	KERNEL_PART="/dev/mtd12"
+	echo "Installing Base2ATAP files from the ATAP." 
+else  #booted from Base
+	MFG_BASE="/opt/prg_mfg" 
+	DIDJ_BASE="/Didj"
+	ROOT_BASE="/"
+	mount -t jffs2 /dev/mtdblock6 /mnt2 > /dev/null
+	ROOT2_BASE="/mnt2"
+	FLAGS_BASE="/flags"
+	FROM_ATAP=0
+	KERNEL_PART="/dev/mtd3"
+	echo "Installing Base2ATAP files to the unit." 
+fi
+
+
+if [ -e $DIDJ_BASE/Base/Base2ATAP/mkbase.sh ] ; then
+	cp -f $DIDJ_BASE/Base/Base2ATAP/mkbase.sh $ROOT_BASE/usr/bin
+	cp -f $DIDJ_BASE/Base/Base2ATAP/mkbase.sh /usr/bin
+fi
+if [ -e $DIDJ_BASE/Base/Base2ATAP/lfpkg ] ; then
+	cp -f $DIDJ_BASE/Base/Base2ATAP/lfpkg $ROOT_BASE/usr/bin
+	cp -f $DIDJ_BASE/Base/Base2ATAP/lfpkg /usr/bin
+fi
+
+if [ "$FROM_ATAP" = "0" ] ; then 
+	lfpkg -a validate /Didj/Base/Base2ATAP
+	if [ ! "`echo $?`" = "0" ] ; then
+		echo "ERROR: Package file did not unpack correctly or is corrupt." 
+		exit 1
+	fi
+	rm -rf /Didj/Base2ATAP*.lfp
+fi
+
+cp -rf $DIDJ_BASE/Base/Base2ATAP/Atap_FW $DIDJ_BASE
+if [ "`ls $DIDJ_BASE/Base/Base2ATAP/Atap_FW | grep -c ATAP`" -ne "0" ] ; then
+	cp -f $DIDJ_BASE/Base/Base2ATAP/Atap_FW/bootstrap-LF_LF1000*_ATAP*.lfp $DIDJ_BASE
+fi
+if [ -e $DIDJ_BASE/Base/Base2ATAP/kernel.bin -a -e $DIDJ_BASE/Base/Base2ATAP/kernel.md5 ] ; then 
+	echo "Updating $KERNEL_PART to special mfg kernel"
+	EXPECTED_KERNEL_SUM="`cat $DIDJ_BASE/Base/Base2ATAP/kernel.md5`"
+	flash_eraseall $KERNEL_PART > /dev/null
+	nandwrite -p $KERNEL_PART $DIDJ_BASE/Base/Base2ATAP/kernel.bin > /dev/null
+	FILE_SIZE=`ls -l $DIDJ_BASE/Base/Base2ATAP/kernel.bin | tr -s "" " " | cut -d" " -f5`
+	FILE_SUM=`nanddump -m -l $FILE_SIZE $KERNEL_PART 2> /dev/null`
+	if [ ! "$FILE_SUM" = "$EXPECTED_KERNEL_SUM" ]; then
+		echo "kernel flash failed.  Failing."
+		exit 1
+	fi
+	echo "Special Kernel install successful."
+fi
+
+cp -f $DIDJ_BASE/Base/Base2ATAP/*.png $ROOT_BASE/var/screens
+cp -f $DIDJ_BASE/Base/Base2ATAP/*.png $ROOT2_BASE/var/screens
+touch $FLAGS_BASE/mfcart
+touch $FLAGS_BASE/main_app
+echo UNLOCKED > $FLAGS_BASE/usb_mass_storage
+cp -f $DIDJ_BASE/Base/Base2ATAP/S52Atap $ROOT_BASE/etc/init.d/Atap
+cp -f $DIDJ_BASE/Base/Base2ATAP/S52Atap $ROOT2_BASE/etc/init.d/Atap
+cp -f $DIDJ_BASE/Base/Base2ATAP/bootflags $ROOT_BASE/etc/init.d
+cp -f $DIDJ_BASE/Base/Base2ATAP/bootflags $ROOT2_BASE/etc/init.d
+rm -f $ROOT_BASE/etc/rc.d/S52*
+rm -f $ROOT_BASE/etc/rc.d/S53*
+rm -f $ROOT2_BASE/etc/rc.d/S52*
+rm -f $ROOT2_BASE/etc/rc.d/S53*
+cp -s /etc/init.d/Atap $ROOT_BASE/etc/rc.d/S52Atap
+cp -s /etc/init.d/Atap $ROOT2_BASE/etc/rc.d/S52Atap
+mkdir -p $DIDJ_BASE/ATAP
+
+umount /Cart > /dev/null
+if [ "`mount | grep -c /mnt`" -ge "1" ] ; then
+	umount /mnt > /dev/null 2>/dev/null
+	umount /mnt2 > /dev/null 2>/dev/null
+	exit 0
+fi
+
+rm -rf $DIDJ_BASE/Base/Base2ATAP
+
+exit 0

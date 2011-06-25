@@ -1,0 +1,23 @@
+#!/bin/bash
+
+set -e
+
+. $PROJECT_PATH/scripts/functions
+
+# make sure all of the environment variables are good
+check_vars
+
+# exit if the user is root
+check_user
+
+# parse args
+set_standard_opts $*
+
+pushd $PROJECT_PATH/packages/screens
+
+mkdir -p $ROOTFS_PATH/var/screens/
+cp *.png $ROOTFS_PATH/var/screens/
+
+popd
+
+exit 0

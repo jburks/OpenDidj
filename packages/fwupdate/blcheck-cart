@@ -1,0 +1,56 @@
+#!/bin/sh
+
+# Make this a comment to speed things up a tiny bit
+#
+# blcheck 
+# 
+# blcheck-cart checks if an installed cart has a bootloader update and
+# that update is needed.  If a bootloader update is in order,
+# blcheck-cart prints the path to the package that is to be installed.
+# Otherwise, it prints nothing.  A bootloader update is in order if
+# the following condition is true:
+#
+# 1) A package named bootstrap-*.lfp exists in the /Cart/updates whose
+# lightning-boot.bin has a different md5 sum than that of the
+# currently installed bootloader.
+
+# ensure that usb is disabled
+# time 1.9
+usbctl -d mass_storage -a disable > /dev/null
+
+CARTDIR=/Cart/updates
+
+# Find the current version
+# time 0.01
+PKG=`ls -1 $CARTDIR/bootstrap-*.lfp 2>/dev/null | sort | tail -1`
+
+if [ ! "$PKG" = "" ]; then
+
+	# Check md5 sum
+	# time 0.05
+	BL_FILE=`unzip -l $PKG | grep lightning-boot.bin | grep -v lightning-boot.bin.md5 | awk '{print $4}'`
+	# time 0.05
+	BL_SUM_FILE=`unzip -l $PKG | grep lightning-boot.md5 | awk '{print $4}'`
+	if [ "$BL_FILE" = "" -o "$BL_SUM_FILE" = "" ]; then
+		# invalid pkg
+		echo invalid pkg 2>&1
+		exit 1
+	fi
+
+	# Check version of new bootloader
+	# time 0.39
+	NEWEST_VERSION=`lfpkg -a version $PKG`
+	NEWEST_SUFFIX=`echo $NEWEST_VERSION | cut -d '.' -f 4`
+
+	# Check version of installed bootloader
+	# time 1.41
+	CURRENT_VERSION=`nanddump /dev/mtd0 2>/dev/null | grep VERSION | cut -d : -f 2`
+	CURRENT_SUFFIX=`echo $CURRENT_VERSION | cut -d '.' -f 4`
+	echo "new ($NEWEST_VERSION) $NEWEST_SUFFIX != cur ($CURRENT_VERSION) $CURRENT_SUFFIX ?" 1>&2
+
+	if [ "$NEWEST_SUFFIX" != "$CURRENT_SUFFIX" ]; then
+		echo $PKG
+		exit 0		
+	fi
+fi
+exit 0

@@ -1,0 +1,64 @@
+Welcome to the scripts directory.  It's sort of like mission control for the
+LinuxDist.  From here, you can create releases, build the entire root file
+system, etc.  For a true understanding, read the scripts.  There is no
+guarantee that this info is totally up-to-date.  But here's some basic
+background.
+
+make_release_all.sh [-c]: This script is a simple wrapper for make_release.sh.
+Its purpose is to make several 'releases' (ex: for different platform variants)
+and package them up into one overall release.
+
+make_directories.sh [-e]: Creates the directory structure for the root file
+system.  -e is for embedded, which means no include dirs.
+
+make_rootfs.sh [-e -c]: This script invokes all of the install scripts for
+the packages in the *-package-list file and for the kernel.  -e is for embedded
+(i.e., no headers or man pages).  -c is for clean (i.e., delete the old rootfs
+and create a fresh one.
+
+make_bootflags.sh [-c]: This script creates the JFFS2 image that is to be 
+written to the Atomic Boot Flags partition.  The image contains the default
+boot flags for a 'fresh' board.  Using this script is not required: the 
+LinuxDist, on bootup, will create the bootflags partition automatically if one
+was not found.
+
+make_kernel.py [-c -u]: This script creates the kernel.bin image that is to be
+written to the Kernel partitions.  The image contains a boot splash screen, the
+kernel uImage and, if needed, a u-boot.bin image for development/debugging
+(useful on Development boards only).
+
+functions: This is a simple include file containing some useful pre-amble
+functions for install scripts.
+
+make_release.sh [-c -e -u]: This file creates a complete release.  If invoked 
+without the -e, this includes a Complete Root File System.  If invoked with the
+-e it creates an Embedded Root File System (which is a jffs2 image) and a 
+kernel image.  If invoked with the -u option, the u-boot bootloader will be 
+included.  If invoked with the -c option, a clean release is created.  You 
+should probably always invoke with the -c option unless you are testing the 
+build scripts.  To make a release that contains both the embedded and complete 
+root file systems, invoke this script twice, once with the -e and once without.
+
+make_map.py: This script makes a NAND Flash memory map for use with 
+lightning_install.py (in ../host_tools).  This map is distributed as part of
+the release.  Suggested use: 
+$ ./make_map.py > /path/to/flash.map
+
+make_tarball.sh: This is a simple script that "svn export"s the entire 
+LinuxDist and makes a tarball of it in /tmp.  It is not used in the normal
+release procedures.
+
+DEPRECATED
+----
+
+brio_install.sh [-c]: This script installs brio in the rootfs.  -c is for a
+clean install.
+
+make_kernel.sh [-c -u]: This script is deprecated for releases after 0.17.1.  
+This script created the JFFS2 image that is to be written to the Kernel 
+partitions.  The image contains a kernel uImage and, if needed, a u-boot image 
+for development/debugging.
+
+TODO
+----
+

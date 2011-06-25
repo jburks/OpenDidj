@@ -1,0 +1,19 @@
+#!/bin/sh
+# this is a simple example script to demonstrate how the init system works.
+
+case "$1" in
+	start)
+		echo "Starting simple example script."
+		;;
+
+	stop)
+		echo "Stopping simple example script."
+		;;
+	*)
+		echo "Usage: /etc/init.d/example {start|stop}"
+		exit 1
+		;;
+esac
+
+exit 0
+

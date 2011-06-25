@@ -1,0 +1,14 @@
+#!/bin/sh
+
+. /var/lib/lftest/functions
+
+# parse args
+set_standard_opts $*
+
+CLASS="rtc"
+
+# test Real-Time clock
+CMD="rtctest /dev/rtc0"
+TEST="Test real-time clock" run_test_non_interactive $CMD
+
+exit 0

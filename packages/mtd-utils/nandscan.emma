@@ -1,0 +1,50 @@
+nandscan(1)
+
+h1. NAME
+
+nandscan
+
+h1. SYNOPSIS
+
+*nandscan* \[-options\] _device_
+
+h1. DESCRIPTION
+
+*nandscan* is a user-mode utility for viewing or refreshing the bad-block data stored in the *mtd* driver RAM.
+
+The _device_ parameter should be an *mtd* character device, such as {{/dev/mtd9}}.
+
+h1. OPTIONS
+
+| *-s, --scan* | Scan (similar to boot) NAND OOB for bad block markers and construct RAM bad block table (BBT) |
+| *-r, --ram*  | Display RAM Bad Block Table |
+| *--version* | Print version and exit |
+| *-h, --help* | Summary of options  |
+
+h1. OVERVIEW
+
+*nandscan* is used in conjunction with *nandscrub* and *nandwipebbt* to fix or diagnose bad-block related problems
+on NAND chips used in Didj.
+
+*nandscan*'s primary purpose is the recreate the bad block table (BBT) by performing the same scan that Linux does at boot.
+This scan reads the OOB data for every erase block on the given NAND chip (or portion thereof) and checks for the bad block marker
+signature.  If it finds one, it adds it to the RAM BBT.  The BBT is erased at the beginning of the scan, so results are
+not cumulative.
+
+The *-r* option will simply display the BBT without modifying it.
+
+With no options, *nandscan* does nothing.
+
+h1. BUGS
+
+h1. AUTHOR
+
+Robert Dowling
+
+h1. COPYRIGHT
+
+This is free software.  You may redistribute copies of it under the terms of the GNU General Public License <http://www.gnu.org/licenses/gpl.html>.  There is NO WARRANTY, to the extent permitted by law.
+
+h1. SEE ALSO
+
+nandscrub, nandwipebbt, nandtest, flash_erase, flash_eraseall

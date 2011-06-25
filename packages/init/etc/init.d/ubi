@@ -1,0 +1,223 @@
+#!/bin/sh
+
+# This script prepares the UBI volumes.
+
+set -e
+
+. /etc/ubi/ubi.config
+
+UBI_DEV_NUM=""
+# Note: the UBI_DEV_NAME is the MTD_DEV_NAME with ubi_ appended to the front.
+# However, if the MTD_DEV_NAME starts with prg_, we strip that before applying
+# the ubi_.  This makes it so that mfg cartridges get the correct volume names.
+UBI_DEV_NAME=""
+
+# Is a particular UBI device with MTD device name $0 configured in the UBI
+# layer?  If so, set all the global variables for this UBI device
+is_configured() {
+	name=$1
+	if [ "$name" = "" ]; then
+		return 0;
+	fi
+	
+	for d in  `ls /sys/class/ubi/ | grep -v _ | grep -v version`; do
+		N=`cat /sys/class/ubi/$d/mtd_dev_name`
+		if [ "$N" = "$name" ]; then
+			UBI_DEV_NUM=`echo $d | cut -c 4-`
+			UBI_DEV_ROOT_NAME=`echo $N | grep -E '^prg_' | cut -d "_" -f 2-`
+			if [ "$UBI_DEV_ROOT_NAME" = "" ]; then
+				UBI_DEV_NAME="ubi_$N"
+			else
+				UBI_DEV_NAME="ubi_$UBI_DEV_ROOT_NAME"
+			fi
+			return 1
+		fi
+	done
+	
+	return 0;
+}
+
+format_ubi_vol() {
+	# We create a single UBI volume on our UBI device
+	if [ "$UBI_DEV_NUM" = "" ]; then
+		echo "UBI: Failed to find UBI or device"
+		exit 1
+	fi
+	ubimkvol --devn=$UBI_DEV_NUM --vol_id=0 --name="$UBI_DEV_NAME" --maxavsize
+}
+
+delete_ubi_vol() {
+	if [ "$UBI_DEV_NUM" = "" ]; then
+		echo "UBI: Failed to find UBI volume id"
+		exit 1
+	fi
+	V=`cat /sys/class/ubi/ubi$UBI_DEV_NUM/volumes_count`
+	if [ ! "$V" = "1" ]; then
+		for v in `seq 0 $(($V-2))`; do
+			ubirmvol --devn=$UBI_DEV_NUM --vol_id=$v
+		done
+	fi
+}
+
+case "$1" in
+	start)
+		if [ ! -e /sys/class/ubi/ ]; then
+			echo "Error: Can't find UBI!  System is unrepairable over USB!"
+			# Note: It is possible in this case that the UBI has been corrupted
+			# by an external force.  That is, an mtd device given to the UBI
+			# layer is not valid.  We may want to erase the mtd device in the
+			# UBI driver.
+			exit 1
+		fi
+
+		for cfg in $UBI_MTD_CFGS; do
+			MTD_DEV_NAME=`echo $cfg | cut -d : -f 1`
+			UBI_MOUNT=`echo $cfg | cut -d : -f 2`
+			VOLUME_NAME=`echo $cfg | cut -d : -f 3`
+
+			if [ "$MTD_DEV_NAME" = "" ]; then
+				echo "Warning: Malformed UBI configuration word $cfg"
+				return 0
+			fi
+			
+			set +e 
+			is_configured "$MTD_DEV_NAME"
+			RESULT=$?
+			if [ "$RESULT" = "0" ]; then
+				continue
+			fi
+
+			echo "Configuring $MTD_DEV_NAME"
+
+			# Now we have our UBI device and we know it exists.  We should
+			# either see 2 or 1 volumes including the internal volume.  If we
+			# don't, reformat.
+
+			NUM_VOLS=`cat /sys/class/ubi/ubi$UBI_DEV_NUM/volumes_count`
+			if [ "$NUM_VOLS" = "1" ]; then
+				echo "UBI device is empty.  Formatting"
+				format_ubi_vol
+				
+			elif [ "$NUM_VOLS" = "2" ]; then
+				NAME=`cat /sys/class/ubi/ubi$UBI_DEV_NUM'_0'/name`
+				if [ ! "$NAME" = "$UBI_DEV_NAME" ]; then
+					echo "UBI: Expected UBI volume \"$UBI_DEV_NAME\", not \"$NAME\""
+					echo "Reformatting"
+					delete_ubi_vol
+					format_ubi_vol
+				fi
+			
+				# Check for corruption
+				CORRUPT=`cat /sys/class/ubi/ubi$UBI_DEV_NUM'_0'/corrupted`
+				if [ "$CORRUPT" = "1" ]; then
+					echo "ERROR: UBI Volume $v is corrupted.  Reformatting."
+					# is this really the proper corrective action?
+					delete_ubi_vol
+					format_ubi_vol
+				fi
+
+			else
+				echo "UBI: Unexepected number of volumes!  Reformatting."
+				delete_ubi_vol
+				format_ubi_vol
+			fi
+			
+			# By the time we get here, we are certain that there is one volume and
+			# it is not corrupt as far as UBI is concerned.  Now we must try to
+			# mount it.  If it won't mount, it's either because the FAT is corrupted
+			# or because its are not formatted.
+			# mkdir -p $UBI_MOUNT
+			# chmod 777 $UBI_MOUNT
+
+			# Choose r/w mode
+			RW_MODE="rw"
+			if [ "$UBI_MOUNT" = "/Cart" ]; then
+				# Determine if we have a read-only cart
+				RW_MODE=`cartinfo -w`
+			fi
+
+			UBI_MTD_NUM=`cat /sys/class/ubi/ubi$UBI_DEV_NUM'_0'/vol_mtd_num`
+			set +e
+			umount $UBI_MOUNT 2> /dev/null
+			if [ -e /flags/booted -o -e /flags/needs_repair ]; then
+				# if the last boot was unclean, do an fsck.
+				# Ditto if needs_repair has been previously set.
+				# But not if ro production cart
+				if [ "$RW_MODE" = "ro" ]; then
+					echo "Skipping fsck on RO cart"
+				else
+					echo "ubi: fsck check on /dev/mtdblock$UBI_MTD_NUM $UBI_MOUNT"
+					fsck_watch.sh /dev/mtdblock$UBI_MTD_NUM $UBI_MOUNT
+					RESULT=$?
+					if [ "$RESULT" = "0" ]; then
+						rm /flags/needs_repair
+					else
+						touch /flags/needs_repair
+					fi
+
+					# Mount volume only when needs_repair is not set
+					if [ ! -e /flags/needs_repair ]; then
+						mount -t vfat -o async,noatime /dev/mtdblock$UBI_MTD_NUM $UBI_MOUNT
+						# clean up any debris left by the fsck
+						rm -f $UBI_MOUNT/FSCK*.REC
+						rm -f $UBI_MOUNT/fsck*.rec
+						umount $UBI_MOUNT
+					else
+						echo "ubi: Brazenly refusing to mount $UBI_MOUNT because /flags/needs_repair"
+					fi
+				fi
+			fi
+
+			# Mount volume only when needs_repair is not set
+			if [ ! -e /flags/needs_repair ]; then
+				mount -t vfat -o async,noatime,"$RW_MODE" /dev/mtdblock$UBI_MTD_NUM $UBI_MOUNT
+				RESULT=$?
+
+				if [ ! "$RESULT" = 0 -a "$RW_MODE" != "ro" -a -e $UBI_MOUNT ]; then
+					echo "UBI: Looks like $UBI_MOUNT doesn't have a file system yet."
+					echo "UBI: I'll create one."
+					mkfs.vfat -n $VOLUME_NAME -S 512 /dev/mtdblock$UBI_MTD_NUM > /dev/null
+					mount -t vfat -o async,noatime /dev/mtdblock$UBI_MTD_NUM $UBI_MOUNT
+					# assume we succeed here.
+				fi
+			else
+				echo "ubi: Brazenly refusing to mount $UBI_MOUNT because /flags/needs_repair"
+			fi
+			set -e
+
+		done
+
+		touch /flags/booted
+		sync
+
+		;;
+
+	stop)
+		set +e
+		for cfg in $UBI_MTD_CFGS; do
+			MTD_DEV_NAME=`echo $cfg | cut -d : -f 1`
+			UBI_MOUNT=`echo $cfg | cut -d : -f 2`
+			is_configured "$MTD_DEV_NAME"
+			RESULT=$?
+			if [ "$RESULT" != "0" ]; then
+				echo "Unmounting $UBI_MOUNT"
+				umount $UBI_MOUNT
+			fi
+		done
+		set -e
+		rm -f /flags/booted
+		sync
+		;;
+
+	restart)
+		$0 stop
+		$0 start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
+
+exit 0
+

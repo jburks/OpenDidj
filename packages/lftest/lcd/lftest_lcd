@@ -1,0 +1,46 @@
+#!/bin/sh
+
+. /var/lib/lftest/functions
+
+# parse args
+set_standard_opts $*
+
+CLASS="lcd"
+
+# clear out the MLC layers
+for i in `seq 0 2`; do
+	layer-control /dev/layer$i s enable off
+	layer-control /dev/layer$i s dirty
+done
+
+# red
+CMD="mlc-control /dev/mlc s background FF0000"
+TEST="set screen to red" run_test_non_interactive $CMD
+CMD="mlc-control /dev/mlc s dirty"
+TEST="set dirty" run_test_non_interactive $CMD
+QUESTION="Is the screen red?"
+TEST="screen is red?" run_test_interactive $QUESTION
+
+# green
+CMD="mlc-control /dev/mlc s background 00FF00"
+TEST="set screen to green" run_test_non_interactive $CMD
+CMD="mlc-control /dev/mlc s dirty"
+TEST="set dirty" run_test_non_interactive $CMD
+QUESTION="Is the screen green?"
+TEST="screen is green?" run_test_interactive $QUESTION
+
+# blue
+CMD="mlc-control /dev/mlc s background 0000FF"
+TEST="set screen to blue" run_test_non_interactive $CMD
+CMD="mlc-control /dev/mlc s dirty"
+TEST="set dirty" run_test_non_interactive $CMD
+QUESTION="Is the screen blue?"
+TEST="screen is blue?" run_test_interactive $QUESTION
+
+# display an image
+CMD="test-rgb.sh"
+TEST="show test image" run_test_non_interactive $CMD
+QUESTION="Do you see an image on the screen?"
+TEST="image on the screen?" run_test_interactive $QUESTION
+
+exit 0

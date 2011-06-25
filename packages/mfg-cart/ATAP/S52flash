@@ -1,0 +1,462 @@
+#!/bin/sh
+
+#####################################################################
+#   S52flash file for Didj ATAP manufacturing cartridge
+#     Written by Nathan Durrin
+#
+#   Function: This script will flash a dev board or unit automatically.
+#	      Unless the USB cable is plugged in on bootup, it will 
+#	      erase all partitions then reboot and update the firmware
+#             to the versions in the FW_packages directory of the MFG_PAYLAOD
+#             usb drive. Then it will install any content packages in 
+#             the /Packages directory of the MFG_PAYLOAD usb drive.  
+#             If the USB cable is plugged in, it will not update the unit
+#             and will allow the user to update the cartridge payloads.
+#
+#   Revision Table..................................................
+#   Date	Rev   Author		Change	 
+#   ----------------------------------------------------------------
+#   12/05/07    001    N.Durrin	        Initial release with rev box
+#   12/06/07    002    N.Durrin		Added umount /opt/Didj before erase flash
+#					Added erase flash if ANY version different
+#   12/11/07	003    N.Durrin		Always forced flash unless USB is connected 
+#					during startup.  NO VERSION CHECKING
+#   12/14/07    004    N.Durrin		Change to for loop for checking FW packages
+#					Will not erase if flash is already empty
+#   12/18/07    005    N.Durrin		Added texton screen to display versions.
+#   01/16/08	007    N.Durrin		Removed erase mfgdata partition to preserve any data or SN
+#					Added check mkbase status.
+#   01/17/08	008    N.Durrin		Create better flash erase function
+#   01/22/08	009    N.Durrin		Piped mkbase.sh output to file and fail if return non-zero
+#   01/23/08    010    N.Durrin		Fixed output of screen while mkbase is running 
+#					Change rgb screens to png screens
+#   01/25/08    011    N.Durrin		Change validate after install each package, rather than all at end.
+#   02/29/08	012    N.Durrin		Added UNLOCK ONCE to unit for USB update online
+#   03/10/08	013    N.Durrin		If failed to mnt dev13 to check if empty, will erase instead
+#   03/18/08    014    N.Durrin		Rearanged checking flash empty for better error handling
+#   03/26/08    015    N.Durrin		Added bootflags script to help corruption issue
+#   04/10/08    016    N.Durrin		Added a custom UBI script so it will not corrupt unit by reformatting
+#   08/07/08	017    N.Durrin		Added removing needs_repair flag if it exists.  Will reboot if existed.  
+#
+######################################################################
+FILE_REV="017"
+
+USB_UNLOCK_CYCLES="1"
+
+set -e		
+
+#display's screen 
+set_screen () {
+	SCREEN_NAME=$1
+
+	layer-control /dev/layer0 s enable off
+	layer-control /dev/layer0 s format B8G8R8
+	layer-control /dev/layer0 s hstride 3
+	layer-control /dev/layer0 s vstride 960
+	layer-control /dev/layer0 s position 0 0 320 240
+	layer-control /dev/layer0 s dirty
+	imager /dev/layer0 /var/screens/$SCREEN_NAME
+	layer-control /dev/layer0 s enable on
+	layer-control /dev/layer0 s dirty
+	
+	return 0
+}
+
+#erases all flash partitions that start with prg_ in the cat /proc/mtd except the mfgdata partition on the unit to preserve serial number
+erase_flash () {
+	if [ `mount | grep -c /opt/Didj` = "1" ] ; then
+		umount /opt/Didj			
+	fi
+
+	if [ `mount | grep -c /mnt` = "1" ] ; then
+		umount /mnt			
+	fi
+	
+	for part in `cat proc/mtd | grep prg_ | cut -d : -f1` ; do 
+		if [ ! "$part" = "`cat proc/mtd | grep prg_M | cut -d : -f1`" ] ; then 
+			echo "erasing $part"
+			flash_eraseall /dev/$part > /dev/null
+		else 
+			echo "Skipping mfgdata partition"		
+		fi
+	done
+	touch /flags/flash_ok
+	return 0
+}
+
+#reads the button requested to see if it is pressed or not
+#returns 1 if button is pressed, returns 0 if not.  Returns 99 and prints help if something was wrong with function call.
+read_button () {
+	BUTTON_NAME=$1
+	SUPPORTED_BUTTONS="up down right left a b"
+	BUTTON_CONFIGS="up:2 down:3 right:1 left:0 a:8 b:9"
+
+	print_help() {
+		echo "Usage: $0 <button>"
+		echo "button can be any of:" $SUPPORTED_BUTTONS
+		echo "prints either pressed unpressed depending on button status."
+	}
+
+	if [ "$BUTTON_NAME" = "" ]; then
+		print_help
+		return 99
+	fi
+
+	BUTTON=""
+	for b in $BUTTON_CONFIGS; do
+		B=`echo $b | cut -d : -f 1`
+		if [ "$B" = "$BUTTON_NAME" ]; then
+			BUTTON=$B
+			GPIO=`echo $b | cut -d : -f 2`
+			break
+		fi
+	done
+
+	if [ "$BUTTON" = "" ]; then
+		print_help
+		return 99
+	fi
+
+	NOT_PRESSED=`gpio-control /dev/gpio invalue 2 $GPIO | grep value | cut -d = -f 2`
+
+	if [ "$NOT_PRESSED" = 1 ]; then
+		echo unpressed
+		return 0
+	elif [ "$NOT_PRESSED" = 0 ]; then
+		echo pressed
+		return 0
+	else
+		print_help
+		return 99
+	fi	
+}
+
+
+case "$1" in
+	start)
+
+		set_screen "Atap_splash.png"
+		echo "Starting flash script revision $FILE_REV."                                     
+ 		#drawtext /dev/layer0 /test/monotext8x16.rgb "ATAP version $FILE_REV.                 "
+		date
+
+		# kill any application running.
+		MAIN_PID=""
+		if [ -e /tmp/main_app_pid ] ; then
+			MAIN_PID=`cat /tmp/main_app_pid`
+			kill -9 $MAIN_PID
+		fi
+
+		# for manufacturing mode, remount rootfs as read/write                          
+		if [ -e /flags/mfcart ]; then                                                   
+		        mount -o remount,rw /   
+		else 
+			touch /flags/mfcart
+			touch /flags/main_app
+			echo "UNLOCKED" > /flags/usb_mass_storage
+			if [ -e /flags/needs_repair ] ; then
+				# kill -9 `ps | grep file-storage-ga | cut -d 0 -f1` 2> /dev/null
+				echo "Removing needs_repair state and rebooting."
+				echo "0" > /sys/devices/platform/lf1000-usbgadget/gadget/gadget-lun0/needs_repair
+				rm -f /flags/needs_repair 
+				reboot
+				exit 0
+			fi	
+		        mount -o remount,rw /                           
+	        fi   
+
+		if [ -e /flags/needs_repair ] ; then
+			# kill -9 `ps | grep file-storage-ga | cut -d 0 -f1` 2> /dev/null
+			echo "Removing needs_repair state and rebooting."
+			echo "0" > /sys/devices/platform/lf1000-usbgadget/gadget/gadget-lun0/needs_repair
+			rm -f /flags/needs_repair 
+			reboot
+			exit 0
+		fi	
+
+		if [ -e /opt/mfg/gpio-control ] ; then 
+			echo "Updating the gpio-control file"
+			mv /opt/mfg/gpio-control /usr/bin
+		fi
+
+		usbctl -d mass_storage -a disable > /dev/null
+		# if USB is connected, skip update and allow access to USB
+		echo "checking if the USB is plugged in." > /tmp/UDStat
+		USB_CONNECTED=`cat /sys/devices/platform/lf1000-usbgadget/vbus`		
+		if [ $USB_CONNECTED = 1 ] ; then 
+			echo "USB connected, aborting base flash"
+			# display USB Connected screen	
+			usbctl -d mass_storage -a enable > /dev/null			
+			set_screen "DOWNLOAD_IN_PROGRESS.png"
+			rm -f /tmp/UDStat
+			rm -f /tmp/reboot
+			exit 0
+		fi
+
+		#echo "checking USB file system" > /tmp/UDStat
+		#usbctl -d mass_storage -a fsck
+		echo "disabling USB for payload update" > /tmp/UDStat
+		usbctl -d mass_storage -a disable #> /dev/null
+
+		if [ `mount | grep -c /opt/Didj` != "1" ] ; then
+			echo "ERROR: /opt/Didj is not mounted.  Rebuilding and rebooting."
+			erase_flash
+			rm -f /tmp/UDStat
+			touch /tmp/reboot
+			reboot
+			exit 1
+		fi
+
+
+		if [ `mount | grep -c /opt/mfg` != "1" ] ; then
+			echo "writing files to /opt/mfg." > /tmp/UDStat
+			echo "ERROR: /opt/mfg is not mounted."
+			exit 1
+		fi
+
+		if [ `mount | grep -c " /Didj"` != "1" ] ; then
+			echo "mounting /Didj." > /tmp/UDStat
+			echo "ERROR: /Didj is not mounted."
+			exit 1
+		fi
+
+		echo "ensuring your cartridge has the latest files." > /tmp/UDStat
+		if [ -e /opt/mfg/lfpkg ] ; then 
+			echo "Updating the lfpkg tool."
+			mv -f  /opt/mfg/lfpkg /usr/bin
+		fi
+
+		if [ -e /opt/mfg/ubi ] ; then 
+			echo "Updating the ubi startup script."
+			mv -f  /opt/mfg/ubi /etc/init.d
+		fi
+
+		if [ -e /opt/mfg/bootflags ] ; then 
+			echo "Updating the bootflags script."
+			mv -f  /opt/mfg/bootflags /etc/init.d
+		fi
+
+		if [ -e /opt/mfg/S52flash ] ; then 	
+			echo "Updating the flash script."	
+			mv /opt/mfg/S52flash /etc/init.d/flash
+			cp -s /etc/init.d/flash /etc/rc.d/S52flash
+		fi
+
+		if [ -e /opt/mfg/S53status ] ; then 	
+			echo "Updating the status script."	
+			mv /opt/mfg/S53status /etc/init.d/status
+			cp -s /etc/init.d/status /etc/rc.d/S53status
+		fi
+
+		if [ "`ls /opt/mfg | grep -c .rgb`" -ge "1" ] ; then 
+			echo "Copying status rgb screens."
+			mv /opt/mfg/*.rgb /var/screens
+		fi
+		
+
+		if [ "`ls /opt/mfg | grep -c .png`" -ge "1" ] ; then 
+			echo "Copying status png screens."
+			mv /opt/mfg/*.png /var/screens
+		fi
+
+		if [ -e /opt/mfg/mkbase.sh ] ; then 
+			echo "Updating the mkbase.sh."
+			mv /opt/mfg/mkbase.sh /usr/bin
+		fi
+
+		for LFP in `find /opt/mfg/FW_packages/ -name "*.lfp"` ; do
+			
+			CUR_LFP="`echo $LFP | cut -d/  -f5 | cut -d- -f1 `"
+			CUR_BRD="`echo $LFP | cut -d/  -f5 | cut -d- -f2 `"
+			BASE="/Didj"
+			DIR=""
+			ACTION=""
+			PKG="`echo $LFP `"
+			META_VERSION=" `echo $LFP | cut -d- -f3 | tr -d lfp ` "
+
+			echo "checking for new versions of $CUR_LFP-$CUR_BRD in /opt/mfg/FW_packages directory" > /tmp/UDStat	
+			echo "Latest $CUR_LFP-$CUR_BRD version is $META_VERSION"
+	 		drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+	 		drawtext /dev/layer0 /test/monotext8x16.rgb "$CUR_LFP version $META_VERSION"	
+	
+			if [ -e /Didj/Base/$CUR_LFP-$CUR_BRD/meta.inf ] ; then		
+				CUR_VER="`cat /Didj/Base/$CUR_LFP-$CUR_BRD/meta.inf | grep '\<Version' | cut -d\\" -f2`" 
+				echo "Your current ATAP's $CUR_LFP-$CUR_BRD verion is $CUR_VER."
+				if [ "`echo $CUR_VER | tr -d .- `" = "`echo $META_VERSION | tr -d .- `" ] ; then 
+					echo "Your ATAP's $CUR_LFP-$CUR_BRD payload is up to date"
+				else 
+					echo "updating to new $CUR_LFP-$CUR_BRD packages on cartridge from /opt/mfg/FW_packages" > /tmp/UDStat
+					echo "Deleting /Didj/Base/$CUR_LFP-$CUR_BRD"
+					rm -Rf /Didj/Base/$CUR_LFP-$CUR_BRD*
+
+					echo "Updating ATAP's $CUR_LFP-$CUR_BRD to version $META_VERSION"
+					lfpkg -a install -b $BASE \ $LFP
+					lfpkg -a validate -b $BASE \ $LFP
+					if [ ! "`echo $?`" = "0" ] ; then 
+						echo "ERROR updating to new $CUR_LFP-$CUR_BRD packages on cartridge from /opt/mfg/FW_packages"
+						exit 1
+					fi
+				fi
+			else
+				echo "Installing $CUR_LFP-$CUR_BRD version $META_VERSION on ATAP cartridge"
+				lfpkg -a install -b $BASE \ $LFP
+				lfpkg -a validate -b $BASE \ $LFP
+				if [ ! "`echo $?`" = "0" ] ; then 
+					echo "ERROR installing to $CUR_LFP-$CUR_BRD packages on cartridge from /opt/mfg/FW_packages"
+					exit 1
+				fi
+			fi
+			rm -f $LFP
+
+		done
+		drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+
+		# Comment this next line out to enable flash erase before updating content 
+		# touch /flags/flash_ok  #disables flash erase before load
+
+		
+		# if the flash_ok file doesn't exist, we have not yet erased the flash to burn
+		if [ ! -e /flags/flash_ok ]; then 
+
+			echo "disabling USB for firmware update" > /tmp/UDStat
+			usbctl -d mass_storage -a disable > /dev/null
+	
+			# display Stage_1 screen				
+			set_screen "Stage_1.png"
+
+
+			# Check to see if flash is already empty, if so, will not erase first.
+			echo "mounting Firmware partition 13 to see if flash is empty." > /tmp/UDStat	
+			RESULT="0"
+			mount -t jffs2 /dev/mtdblock13 /mnt || RESULT="`echo $?`"
+			if [ $RESULT -ne 0 ] ; then
+	 			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+		 		drawtext /dev/layer0 /test/monotext8x16.rgb "NAND corrupt, erasing ALL including SN"
+				cd
+				erase_flash
+				touch /flags/flash_ok # history flag to know we have erased flash
+				rm -f /tmp/UDStat
+				touch /tmp/reboot
+				reboot	
+				exit 0		
+			elif [ ! -e /mnt/etc/version ]; then
+				touch /flags/flash_ok
+				umount /mnt
+			else
+				#erase flash first
+				cd	
+				erase_flash
+				touch /flags/flash_ok # history flag to know we have erased flash
+				rm -f /tmp/UDStat
+				touch /tmp/reboot
+				reboot	
+				exit 0
+			fi		
+
+		fi
+
+		#flash_ok file exists meaning we have already erased the flash and ready to burn again
+		rm -f /flags/flash_ok # remove file 
+		# load stage 2 screen
+		set_screen "Stage_2.png"
+
+		echo "burning new firmware using mkbase.sh." > /tmp/UDStat
+		echo "Running mkbase.sh"
+		touch /tmp/reboot
+		(mkbase.sh; echo $? > /tmp/RESULT) | tee -a /tmp/UDStat 
+		if [ ! "`cat /tmp/RESULT`" = "0" ] ; then 
+			echo "ERROR mkbase returned error status."
+			rm -f /tmp/reboot
+			exit 1
+		fi
+
+
+		# Temporary unlock the USB drive for updating over USB
+		if [ -e /opt/mfg/S55Unlock ] ; then
+			echo "Installing Temporary USB unlock on device"
+			mount -t jffs2 /dev/mtdblock13 /mnt > /dev/null
+			cp -f /opt/mfg/S55Unlock /mnt/etc/init.d/Unlock
+			cp -s /etc/init.d/Unlock /mnt/etc/rc.d/S55Unlock
+			echo "$USB_UNLOCK_CYCLES" > /mnt/Unlock
+			umount /mnt
+		fi
+		set_screen "Stage_3.png"
+
+		echo "making the necessary partitions for base content" > /tmp/UDStat			
+		mkdir -p /opt/Didj/Data
+		mkdir -p /opt/Didj/Data/Avatars
+		mkdir -p /opt/Didj/Data/CYO
+		mkdir -p /opt/Didj/Data/MDL
+		mkdir -p /opt/Didj/Data/0
+		mkdir -p /opt/Didj/Data/1
+		mkdir -p /opt/Didj/Data/2
+
+		echo "looking for packages in the /opt/mfg/Packages directory" > /tmp/UDStat
+		for LFP in `find /opt/mfg/Packages/ -name "*.lfp"` ; do
+			CUR_LFP="`echo $LFP | cut -d/  -f5 | cut -d- -f1 `"
+			BASE="/opt/Didj"
+			DIR=""
+			ACTION=""
+			PKG="`echo $LFP `"
+			META_VERSION="`echo $LFP | cut -d- -f2 | tr -d lfp `"
+
+	 		drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+	 		drawtext /dev/layer0 /test/monotext8x16.rgb "Installing $CUR_LFP version $META_VERSION"	
+
+			echo "installing $CUR_LFP, version $META_VERSION on unit" > /tmp/UDStat
+			echo "Installing $CUR_LFP version $META_VERSION" 
+			touch /tmp/reboot
+			cd /opt/Didj
+			lfpkg -a install -b $BASE \ $LFP > /dev/null
+			# This is to immediately validate				
+			echo "validating $CUR_LFP, version $META_VERSION on unit" > /tmp/UDStat
+			echo "validating $CUR_LFP version $META_VERSION"
+		    	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+	 	    	drawtext /dev/layer0 /test/monotext8x16.rgb "Validating $CUR_LFP."
+			lfpkg -a validate -b $BASE \ $LFP >> /tmp/UDStat
+			if [ ! "`echo $?`" = "0" ] ; then 
+				echo "ERROR: $CUR_LFP failed validation" >> /tmp/UDStat
+				rm -f /tmp/reboot
+				exit 1
+			fi
+		done
+		#set_screen "Stage_4.png"
+		#PACKAGES=`find /opt/Didj -name packagefiles.md5 -exec dirname {} \;`
+		#for pkg in $PACKAGES ; do
+		#    PKGNAME=`basename $pkg`
+		#    echo "Validating $pkg..."
+		#    echo "validating $pkg..." > /tmp/UDStat
+	 	#    drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+	 	#    drawtext /dev/layer0 /test/monotext8x16.rgb "Validating $pkg."
+		#    lfpkg -a validate $pkg >> /tmp/UDStat
+		#    if [ ! "`echo $?`" = "0" ] ; then 
+		#		echo "ERROR: $pkg did not pass validation" >> /tmp/UDStat
+		#		rm -f /tmp/reboot
+		#		exit 1
+		#    fi
+		#done
+		
+		rm -f /tmp/UDStat
+		echo "Update was SUCCESSFUL"
+		set_screen "Complete.png"
+		if [ -e /Didj/Base/Brio/bin/DidjMfgTest ] ; then
+			/Didj/Base/Brio/bin/DidjMfgTest
+		elif [ -e /tmp/reboot ] ; then
+			echo "FLASH COMPLETE...SYSTEM WILL NOW POWER OFF"
+			echo "Powering off...remove cartridge then reboot to unit."
+			poweroff  	
+		fi
+		exit 0
+		;;
+
+	stop)
+		echo "Stopping base flash script."
+		;;
+	*)
+		echo "Usage: /etc/init.d/flash {start|stop}"
+		exit 1
+		;;
+esac
+
+exit 0
+

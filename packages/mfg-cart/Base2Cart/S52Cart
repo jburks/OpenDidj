@@ -1,0 +1,519 @@
+#!/bin/sh
+#####################################################################
+#   S52Cart file for making a consumer cartridge from the base unit
+#     Written by Nathan Durrin
+#
+#   Function:  This file will make a consumer NAND cartridge from the  
+#              base unit.  
+#
+#   Revision Table..................................................
+#   Date	Rev   Author		Change	 
+#   ----------------------------------------------------------------
+#   12/06/07    001    N.Durrin	        Initial release 
+#   12/17/07    002    N.Durrin		Added validation of unpacked files
+#   12/18/07    003    N.Durrin		Added text to screen
+#   12/21/07    004    N.Durrin		Fixed path to unpack to root Cart
+#   01/09/08    005    N.Durrin		Removed erase first for OTP purpose.  Will just check if cart not empty
+#   01/21/08    006    N.Durrin   	If no packagefiles.md5 found, will FAIL.
+#   01/22/08	007    N.Durrin		Added version information...no test though, just information
+#   02/05/08	008    N.Durrin		Added self updating S52Cart if exists on /Didj
+#   02/07/08    009    N.Durrin		Updated postinstall to be able to install from ATAP
+#   04/28/08    010    N.Durrin		Added validation from unpacked packagefiles.mdd5 
+#					Added press button to shutdown for speed
+#   05/03/08    011    N.Durrin		Fixed bug where meta.inf exist but no packagefiles.md5 so would fail
+#   05/05/08    012    N.Durrin		Updated lfpkg to only use package's validation file if file is used for validate option
+#   05/08/08    013    N.Durrin		Added three more screens to tell whether full test or checksum test only is being done
+#					Added bin file checksum test
+#   08/07/08    014    N.Durrin		Added clearing needs_repair state.  
+#
+######################################################################
+
+FILE_REV="014"
+ 
+set_screen () {
+	SCREEN_NAME=$1
+
+	layer-control /dev/layer0 s enable off
+	layer-control /dev/layer0 s format B8G8R8
+	layer-control /dev/layer0 s hstride 3
+	layer-control /dev/layer0 s vstride 960
+	layer-control /dev/layer0 s position 0 0 320 240
+	layer-control /dev/layer0 s dirty
+	imager /dev/layer0 /var/screens/$SCREEN_NAME
+	layer-control /dev/layer0 s enable on
+	layer-control /dev/layer0 s dirty
+	
+	return 0
+}
+
+#reads the button requested to see if it is pressed or not
+#returns 1 if button is pressed, returns 0 if not.  Returns 99 and prints help if something was wrong with function call.
+read_button () {
+	BUTTON_NAME=$1
+	SUPPORTED_BUTTONS="b a up down right left"
+	BUTTON_CONFIGS="b:9 a:8 up:2 down:3 right:1 left:0"
+	
+	print_help() {
+		echo "Usage: $0 <button>"
+		echo "button can be any of:" $SUPPORTED_BUTTONS
+		echo "prints either pressed unpressed depending on button status."
+	}
+
+	if [ "$BUTTON_NAME" = "" ]; then
+		print_help
+		return 99
+	fi
+
+	BUTTON=""
+	for b in $BUTTON_CONFIGS; do
+		B=`echo $b | cut -d : -f 1`
+		if [ "$B" = "$BUTTON_NAME" ]; then
+			BUTTON=$B
+			GPIO=`echo $b | cut -d : -f 2`
+			break
+		fi
+	done
+
+	if [ "$BUTTON" = "" ]; then
+		print_help
+		return 99
+	fi
+
+	NOT_PRESSED=`gpio-control /dev/gpio invalue 2 $GPIO | grep value | cut -d = -f 2`
+	
+
+	if [ "$NOT_PRESSED" = 1 ]; then
+		echo unpressed
+		return 0
+	elif [ "$NOT_PRESSED" = 0 ]; then
+		echo pressed
+		return 0
+	else
+		print_help
+		return 99
+	fi	
+}
+
+
+SHUTDOWN=0
+
+#set -e
+case "$1" in
+	start)
+
+		set_screen "Game_1.png"
+
+		echo "Starting Cart script revision $FILE_REV."
+		#echo "checking USB file system" > /tmp/UDStat
+		#usbctl -d mass_storage -a fsck
+
+
+		if [ -e /flags/needs_repair ] ; then
+			# kill -9 `ps | grep file-storage-ga | cut -d 0 -f1` 2> /dev/null
+			echo "Removing needs_repair state and rebooting."
+		 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+		 	drawtext /dev/layer0 /test/monotext8x16.rgb "Clearing needs_repair state. Will reboot"
+			echo "0" > /sys/devices/platform/lf1000-usbgadget/gadget/gadget-lun0/needs_repair
+			rm -f /flags/needs_repair 
+			reboot
+			exit 0
+		fi	
+
+		echo "checking if the USB is plugged in." > /tmp/UDStat
+		USB_CONNECTED=`cat /sys/devices/platform/lf1000-usbgadget/vbus`		
+		if [ $USB_CONNECTED = 1 ] ; then 
+			echo "USB connected, aborting cartridge burn"
+			usbctl -d mass_storage -a enable
+			usbctl -d mass_storage -a unlock
+			# display USB Connected screen				
+			set_screen "DOWNLOAD_IN_PROGRESS.png"
+			rm -f /tmp/UDStat
+			exit 0
+		fi
+
+
+		echo "disabling USB for payload update" > /tmp/UDStat
+		usbctl -d mass_storage -a disable > /dev/null
+		usbctl -d mass_storage -a unlock 
+
+		echo "killing any running processes." > /tmp/UDStat		
+		# kill any application running.
+		MAIN_PID=""
+		if [ -e /tmp/main_app_pid ] ; then
+			MAIN_PID=`cat /tmp/main_app_pid`
+			kill -9 $MAIN_PID
+		fi
+
+		# self update if a new S52Cart file is found
+		if [ -e /Didj/S52Cart ] ; then
+			echo "Updating the S52Cart script."
+			echo "ERROR updating the S52Cart script." > /Didj/ERROR.log
+		 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+		 	drawtext /dev/layer0 /test/monotext8x16.rgb "Updating the S52Cart script."
+			mount -o remount,rw / > /dev/null
+			mv /Didj/S52Cart /etc/init.d/Cart
+		fi
+
+		# self update if new screen files are found
+		if [ "`ls /Didj | grep -c .png`" -ge "1" ] ; then
+			echo "Updating the screen files."
+			echo "ERROR updating the screen files." > /Didj/ERROR.log
+		 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+		 	drawtext /dev/layer0 /test/monotext8x16.rgb "Updating the screens."
+			mount -o remount,rw / > /dev/null
+			mv /Didj/*.png /var/screens
+		fi
+
+		# self update if new gpio-control file is found
+		if [ -e /Didj/gpio-control ] ; then
+			echo "Updating the gpio-control file."
+			echo "ERROR updating the gpio-control file." > /Didj/ERROR.log
+		 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+		 	drawtext /dev/layer0 /test/monotext8x16.rgb "Updating the gpio-control file."
+			mount -o remount,rw / > /dev/null
+			mv /usr/bin/gpio-control /usr/bin/gpio-control.bak
+			mv /Didj/gpio-control /usr/bin
+		fi
+
+		# self update if a new lfpkg file is found
+		if [ -e /Didj/lfpkg ] ; then
+			echo "Updating the lfpkg script."
+			echo "ERROR updating the lfpkg script." > /Didj/ERROR.log
+		 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+		 	drawtext /dev/layer0 /test/monotext8x16.rgb "Updating the lfpkg script."
+			mount -o remount,rw / > /dev/null
+			mv /usr/bin/lfpkg /usr/bin/lfpkg.bak
+			mv /Didj/lfpkg /usr/bin
+		fi
+
+
+
+		echo "finding cartridge." > /tmp/UDStat
+		if [ "`mount | grep -c /Cart`" != "1"  ] ; then 
+			echo "No cartridge found, aborting cartridge process."
+			echo "ERROR: No cartridge found." > /Didj/ERROR.log
+			set_screen "Game_FAIL.png"
+		 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+		 	drawtext /dev/layer0 /test/monotext8x16.rgb "ERROR: No cartridge found."	
+			usbctl -d mass_storage -a enable
+			PRESSED=`read_button b`
+			while [ ! "$PRESSED" = "pressed" ] ; do 
+				PRESSED=`read_button b`
+				if [ "`read_button a`" = "pressed" ] ; then 
+					exit 1
+				fi
+			done
+			poweroff
+			exit 1
+		fi 
+
+
+		if [ ! -e /Cart/* ] ; then  	#Cartridge is empty			
+			EMPTY="1"
+			echo "cart is empty, proceding to program."
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "Proceding to program cartridge."
+
+		else 				#Cartridge is NOT empty
+			EMPTY="0"
+			echo "cart not empty, proceding to validation."
+			drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			drawtext /dev/layer0 /test/monotext8x16.rgb "Proceding to validation."
+		fi
+
+
+		if [ "1" = "$EMPTY" ] ; then 
+
+			echo "looking for content of cartridge." > /tmp/UDStat
+			BASE_PATH="/Didj/Cart"
+			if [ -d $BASE_PATH ] ; then 
+				if [ "1" -le " ` ls $BASE_PATH | grep -c .lfp `" ] ; then 
+
+					#echo "removing any current files on cartridge." > /tmp/UDStat
+					#rm -Rf /Cart/*
+					echo "installing content packages." > /tmp/UDStat
+					echo "ERROR: Unable to install packages to the Cartridge." > /Didj/ERROR.log
+					SHUTDOWN=1				
+					for LFP in `find $BASE_PATH -name "*.lfp"` ; do
+						echo "Installing $LFP" > /tmp/UDStat
+					 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+					 	drawtext /dev/layer0 /test/monotext8x16.rgb "Installing $LFP."	
+						lfpkg -a install -b /Cart -d / $LFP
+					done
+
+				else 
+					echo "finding any content files to burn to cartridge." > /tmp/UDStat
+				     	echo "ERROR: No Cartridge files found to load.  Please load the files in the Didj USB partition in /Cart directory." > /Didj/ERROR.log
+
+					mkdir -p $BASE_PATH
+					set_screen "Game_FAIL.png"
+			 		drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			 		drawtext /dev/layer0 /test/monotext8x16.rgb "ERROR: No content to load on cartridge."	
+					usbctl -d mass_storage -a enable
+					PRESSED=`read_button b`
+					while [ ! "$PRESSED" = "pressed" ] ; do 
+						PRESSED=`read_button b`
+						if [ "`read_button a`" = "pressed" ] ; then 
+							exit 1
+						fi
+					done
+					poweroff
+					exit 1
+				fi
+			else 
+				echo "finding any content files to burn to cartridge." > /tmp/UDStat
+			     	echo "ERROR: No Cartridge files found to load.  Please load the files in the USB partition in /Cart directory." > /Didj/ERROR.log
+				mkdir -p $BASE_PATH
+				set_screen "Game_FAIL.png"
+			 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			 	drawtext /dev/layer0 /test/monotext8x16.rgb "ERROR: No content to load on cartridge."	
+				usbctl -d mass_storage -a enable
+				PRESSED=`read_button b`
+				while [ ! "$PRESSED" = "pressed" ] ; do 
+					PRESSED=`read_button b`
+					if [ "`read_button a`" = "pressed" ] ; then 
+						exit 1
+					fi
+				done
+				poweroff
+				exit 1
+			fi
+
+		fi
+			
+		echo "looking for cartridge content to validate against in /Didj/Cart." > /tmp/UDStat
+		echo "looking for cartridge content to validate against in /Didj/Cart."
+		drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+		drawtext /dev/layer0 /test/monotext8x16.rgb "Looking in /Didj/Cart for packages ..."
+		BASE_PATH="/Didj/Cart"
+		if [ -d $BASE_PATH ] ; then 
+			if [ "`ls $BASE_PATH/*.bin | grep -c .bin$`" -gt "1" ] ; then
+				echo "ERROR:  Too many .bin files in $BASE_PATH.  Only place the one you want to compare to the cartridge in $BASE_PATH." > /Didj/ERROR.log		
+				echo "ERROR:  Too many .bin files in $BASE_PATH.  Only place the one you want to compare to the cartridge in $BASE_PATH." 
+				set_screen "Game_FAIL.png"
+			 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+ 				drawtext /dev/layer0 /test/monotext8x16.rgb "Too many .bin files in $BASE_PATH."	
+				usbctl -d mass_storage -a enable
+				PRESSED=`read_button b`
+				while [ ! "$PRESSED" = "pressed" ] ; do 
+					PRESSED=`read_button b`
+					if [ "`read_button a`" = "pressed" ] ; then 
+						exit 1
+					fi
+				done
+				exit 1
+			elif [ "`ls $BASE_PATH/*.bin | grep -c .bin$`" -eq "1" ] ; then
+				set_screen "Game_Validate_bin.png"
+				echo "validating content based on bin file." > /tmp/UDStat
+				echo "ERROR: Unable to validate the Cartridge based on .bin file." > /Didj/ERROR.log				
+				for bin in `find $BASE_PATH -name "*.bin"` ; do 
+					if [ ! -e $bin.md5 ] ; then 
+						md5sum $BASE_PATH/*.bin > $bin.md5
+					fi
+					FILE_MD5="`cat $bin.md5 | cut -d" " -f1`"
+					rm -f /Didj/ERROR.log
+					echo "Validating $bin is installed on cartridge" > /tmp/UDStat
+					echo "Validating $bin is installed on cartridge"
+					drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+					drawtext /dev/layer0 /test/monotext8x16.rgb "Validating $bin."	
+					CART_MD5="`md5sum /dev/mtd9 | cut -d" " -f1`"
+					if [ "$FILE_MD5" != "$CART_MD5" ] ; then 
+						echo "ERROR: bin checksum ($FILE_MD5) did not match cartridge checksum ($CART_MD5)." > /Didj/ERROR.log
+						echo "ERROR: bin checksum ($FILE_MD5) did not match cartridge checksum ($CART_MD5)."		
+						set_screen "Game_FAIL.png"
+					 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+ 						drawtext /dev/layer0 /test/monotext8x16.rgb "bin checksum does NOT match cartridge."	
+						usbctl -d mass_storage -a enable
+						PRESSED=`read_button b`
+						while [ ! "$PRESSED" = "pressed" ] ; do 
+							PRESSED=`read_button b`
+							if [ "`read_button a`" = "pressed" ] ; then 
+								exit 1
+							fi
+						done
+						poweroff			
+						exit 1
+					fi
+				done
+				rm -f /tmp/UDStat
+				rm -f /Didj/ERROR.log
+				set_screen "Game_PASS.png"
+				if [ $SHUTDOWN = "1" ] ; then 
+					poweroff
+				fi
+				PRESSED=`read_button b`
+				while [ ! "$PRESSED" = "pressed" ] ; do 
+					PRESSED=`read_button b`
+					if [ "`read_button a`" = "pressed" ] ; then 
+						exit 0
+					fi
+				done
+				poweroff
+				exit 0
+				
+				 
+			elif [ "1" -le "` ls $BASE_PATH | grep -c .lfp `" ] ; then 
+				set_screen "Game_Validate_lfp.png"
+				echo "validating content based on packages." > /tmp/UDStat
+				echo "ERROR: Unable to validate installed packages on the Cartridge." > /Didj/ERROR.log
+				
+				for LFP in `find $BASE_PATH -name "*.lfp"` ; do 
+					rm -f /Didj/ERROR.log
+					echo "Validating $LFP" > /tmp/UDStat
+					echo "Validating $LFP"
+					drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+					drawtext /dev/layer0 /test/monotext8x16.rgb "Validating $LFP."	
+					lfpkg -a validate -b /Cart -d / $LFP > /Didj/ERROR.log  
+					RESULT=$?
+					cat /Didj/ERROR.log
+					if [ "0" = "$RESULT" ] ; then
+						rm /Didj/ERROR.log
+					fi
+
+					if [ -e /Didj/ERROR.log ] ; then 			     			
+						echo "ERROR: Installed content did not match validation file. Error validating $pkg." >> /Didj/ERROR.log		
+						set_screen "Game_FAIL.png"
+					 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+ 						drawtext /dev/layer0 /test/monotext8x16.rgb "$pkg validate failed."	
+						usbctl -d mass_storage -a enable
+						PRESSED=`read_button b`
+						while [ ! "$PRESSED" = "pressed" ] ; do 
+							PRESSED=`read_button b`
+							if [ "`read_button a`" = "pressed" ] ; then 
+								exit 1
+							fi
+						done
+						poweroff
+						exit 1
+					fi
+				done
+				rm -f /tmp/UDStat
+				rm -f /Didj/ERROR.log
+				set_screen "Game_PASS.png"
+				if [ $SHUTDOWN = "1" ] ; then 
+					poweroff
+				fi
+				PRESSED=`read_button b`
+				while [ ! "$PRESSED" = "pressed" ] ; do 
+					PRESSED=`read_button b`
+					if [ "`read_button a`" = "pressed" ] ; then 
+						exit 0
+					fi
+				done
+				poweroff
+				exit 0
+			fi
+		fi
+
+		drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+		drawtext /dev/layer0 /test/monotext8x16.rgb "No package. Will do file checksum only"
+		echo "No package to validate against in /Didj/Cart.  Will only do file checksum validation..."
+
+		set_screen "Game_Validate_md5.png"
+
+		PACKAGES=`find /Cart -name packagefiles.md5 -exec dirname {} \;`
+		if [ "`echo $PACKAGES | grep -c /Cart`" = "0" ] ; then 
+				echo "ERROR: No valid packages found installed on cartridge.  Could not find any packagefiles.md5 file on cartridge." > /Didj/ERROR.log
+				echo "ERROR: No valid packages found installed on cartridge.  Could not find any packagefiles.md5 file on cartridge." 
+				set_screen "Game_FAIL.png"
+			 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+ 				drawtext /dev/layer0 /test/monotext8x16.rgb "No validation files on Cartridge."	
+				usbctl -d mass_storage -a enable
+				PRESSED=`read_button b`
+				while [ ! "$PRESSED" = "pressed" ] ; do 
+					PRESSED=`read_button b`
+					if [ "`read_button a`" = "pressed" ] ; then 
+						exit 1
+					fi
+				done
+				poweroff
+				exit 1
+		fi 
+
+
+		for pkg in $PACKAGES ; do
+			echo "No package to validate against in /Didj/Cart.  Only verifying files in $pkg are not corrupt..." > /tmp/UDStat
+			echo "No package to validate against in /Didj/Cart.  Only verifying files in $pkg are not corrupt..."
+			rm -f /Didj/ERROR.log
+			cd $pkg
+			if [ -e meta.inf ] ; then 
+				VERSION=`grep -e '\<Version=' "meta.inf" | cut -d = -f 2- | cut -d \" -s -f 2` 
+				PACKAGE=`cat $pkg/meta.inf | grep "^Name" | cut -d \\" -f 2`
+			 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+			 	drawtext /dev/layer0 /test/monotext8x16.rgb "$PACKAGE v$VERSION installed in $pkg."
+				echo "$PACKAGE version $VERSION installed on cartridge in $pkg."
+			fi
+			if [ ! -e packagefiles.md5 ] ; then
+				cd			     			
+				echo "ERROR: No packagefiles.md5 file found in $pkg to validate with.  Impossible to validate cartridge files." > /Didj/ERROR.log
+				echo "ERROR: No packagefiles.md5 file found in $pkg to validate with.  Impossible to validate cartridge files." 
+				set_screen "Game_FAIL.png"
+			 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+ 				drawtext /dev/layer0 /test/monotext8x16.rgb "No packagefiles.md5 in $pkg."	
+				usbctl -d mass_storage -a enable
+				PRESSED=`read_button b`
+				while [ ! "$PRESSED" = "pressed" ] ; do 
+					PRESSED=`read_button b`
+					if [ "`read_button a`" = "pressed" ] ; then 
+						exit 1
+					fi
+				done
+				poweroff
+				exit 1
+			fi				 
+			md5sum -c packagefiles.md5 | grep "FAILED" > /Didj/ERROR.log				    	
+			if [ "X`cat /Didj/ERROR.log`" = "X" ] ; then
+				rm /Didj/ERROR.log
+			fi
+			#lfpkg -a validate $pkg > /Didj/ERROR.log
+			if [ -e /Didj/ERROR.log ] ; then 
+				cd			     			
+				echo "ERROR: Installed content did not pass validation. Error validating $pkg." >> /Didj/ERROR.log
+				echo "ERROR: Installed content did not pass validation. Error validating $pkg."
+				set_screen "Game_FAIL.png"
+			 	drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+ 				drawtext /dev/layer0 /test/monotext8x16.rgb "$pkg validate failed."	
+				usbctl -d mass_storage -a enable
+				PRESSED=`read_button b`
+				while [ ! "$PRESSED" = "pressed" ] ; do 
+					PRESSED=`read_button b`
+					if [ "`read_button a`" = "pressed" ] ; then 
+						exit 1
+					fi
+				done
+				poweroff
+				exit 1
+			fi
+			cd
+		done
+
+		rm -f /tmp/UDStat
+		rm -f /Didj/ERROR.log
+		set_screen "Game_PASS.png"
+		echo "CARTRIDGE VALIDATION PASSED"
+		if [ $SHUTDOWN = "1" ] ; then 
+			poweroff
+		fi
+		
+		# check if button B is pressed indicating user wants to directly run mfg test if available
+		PRESSED=`read_button b`
+		while [ ! "$PRESSED" = "pressed" ] ; do 
+			PRESSED=`read_button b`
+			if [ "`read_button a`" = "pressed" ] ; then 
+				exit 0
+			fi
+		done
+		poweroff
+		exit 0
+		;;
+
+	stop)
+		echo "Stopping cart script."
+		;;
+	*)
+		echo "Usage: /etc/init.d/Cart {start|stop}"
+		exit 1
+		;;
+esac
+
+exit 0

@@ -1,0 +1,17 @@
+MetaVersion="1.0"
+Device="Didj"
+Type="System"
+Name="Base2Cart"
+ShortName="Base2Cart"
+Publisher="LeapFrog, Inc."
+Developer="Nathan Durrin"
+Version="014"
+ProductID=0x000E0004
+PartNumber="152-12049"
+PackageID="DIDJ-0x00000000-000000"
+Locale="en-us"
+Hidden=0
+Description="Turn base into cartridge validator"
+BuildDate="08/07/2008"
+Depends=
+Icon=

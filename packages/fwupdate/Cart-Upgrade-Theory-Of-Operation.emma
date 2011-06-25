@@ -1,0 +1,210 @@
+Cartridge Upgrade Design (Theory of Operation)
+
+h1. Overview
+
+Lightning (Didj) is NAND based and its firmware can be upgraded in the field.  There are two possible paths: through a USB connection and through a game cartridge.  The USB path is preferable because it can be controlled by Leap Frog remotely by automatically providing upgrade packages via the web application.  Any time we wish to publish a new firmware version, we can be confident that all connected Didj devices will eventually receive it.  Unfortunately, not all units will be USB attached during their lifetime, so we must be able to provide need another way to upgrade.
+
+This document describes how firmware (LinuxDist and Brio) upgrades can be made from game cartridges.
+
+h1. Requirements
+
+h2. User Experience
+
+* Quick if not upgrading
+* Show a "screen" if upgrading -- this is the "Didj is learning new tricks... standby for shutdown" screen USB already uses.
+* Consistent with USB upgrading
+* For very quick updates, hold update screen since flashing it then shutting down would be confusing
+* No install thrash -- avoiding downgrades means an upgrade never happens twice.
+
+h2. Cases to Handle
+
+We must be sure that all these cases are handled correctly by upgrade procedure and that conflict are resolved sensibly.
+
+* Non-cases
+** No cart
+** Cart with no update
+* Cart with previously installed or "older" update -- test version quickly then do nothing.
+* USB attached at boot and cart with upgrade attached.
+** USB update should take precedence as it is probably _fresher_... maybe cart update should happen before USB?
+** This implies mass_storage should init after cart_update.
+* Unsuccessful update from cart
+** I don't even have a criterion for successful update(!)  I don't think there is a way to recover either!
+* No downgrade possible -- we don't want oscillating installs between two different versions.
+
+h2. Kinds of Cartridge Upgrades.
+
+* Boot loader upgrades were deemed impossible -- too risky.
+
+* LinuxDist (kernel + Root File System) upgrades -- use the same mechanism as USB {{firmware*.lfp}} upgrades.  Since two versions of the kernel+RFS are stored on the base unit, we can upgrade the "other" one and if successful, swap which is considered current and reboot.
+
+* Brio and related packages -- Any .lfp that USB would normally download and unzip in the {{/Didj}} directory can be treated the same way, only this must be done when Brio is _not running_, and we will either have to reboot or restart any Brio applications, including the main application (sign in and picker).
+
+* Miscellaneous executable -- the PATH environment variable is set by {{/etc/profile}} to include a directory on the cartridge.  Placing an binaries in that directory means that they will be found first by the shell (unless full paths are given).  This is the current (as of this writing) PATH setting:
+{noformat}
+export PATH=/Cart/Base/Brio/bin:/Didj/Base/Brio/bin/:/Didj/Base/bin/:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+{noformat}
+
+* Miscellaneous libraries -- similar to PATH, except these are what are loaded by {{ld}}
+{noformat}
+export LD_LIBRARY_PATH=/Cart/Base/Brio/lib:/Didj/Base/Brio/lib/:/Didj/Base/lib/:/usr/local/lib
+{noformat}
+
+Note: Most Brio libraries _cannot_ be upgraded by merely providing them in {{/Cart/Base/Brio/lib}} because Brio hard-codes many of its library paths.
+
+h1. Design Assumptions
+
+* Upgrading is inherently slow, so we won't simply replace firmware if upgrade is present -- we will test for the cartridge firmware being "newer" than what is present on the base, and only upgrade if needed.
+
+* Since older game titles will be deployed to run on older firmware, firmware upgrades must be backward compatible.
+
+* Cart downgrades not allowed -- we don't want oscillating installs between two different versions.
+
+* USB downgrades stop being possible for same reason.  USB downgrades can only be done by re-releasing older packages with new version numbers.
+
+* Decision to perform Cart upgrades cannot be controlled by Leap Frog--must be automatic and use simple algorithm.
+
+* Version strings can be parsed easily, or we will change them if not.
+
+h1. Ramifications of Assumptions
+
+* Since ROM (or OTP) cartridge data is fixed, we cannot remove an upgrade from the cart once it is installed.  We will always have to test any packages provided on cart against what is installed in the base unit.
+
+* Test for "newer" version must be quick.  It occurs at every boot with the cartridge plugged in.
+
+* Must be able to handle conflict between USB upgrade and cart upgrade.
+
+* Need a simple way to test "order" of two versions.  Some packages are versioned with a single number, others, like Brio, used a dotted-quad (i.e. 0.1.36.2839).  Some use hyphens.  The official spec is "two to four decimal numbers, separated by dots [only]".
+
+* Need a quick way to determine where version information is stored in base unit for any given package.  That is, a package's _name_ does not contain sufficient information to determine where that package will get installed on the base.  (The contents of the package does, via the {{meta.inf}} file, but it must be extract, parsed, mapped, and interpreted.
+
+h1. Design Decisions
+
+h2. Extracting version numbers.
+
+Given a package, there are two possible ways to get the version number of the package.
+# The package contains a {{meta.inf}} file which we can unzip, then we can parse that file for the {{Version="xyz"}} line and extract the version number from there.
+# The package name contains the same version number, by convention.
+
+Using #2 is significantly faster, but we would have to enforce that the version in {{meta.inf}} matches version in file name convention.  It seems unlikely that we will go with machine generated file names, so we must go with #1 and perform the unzip operation every time.
+
+h2. Comparing version numbers.
+
+Single number version numbers can be handled as integers, where the larger integer is considered newer.  Dotted quads can be handled in two ways:
+* Intelligently (i.e. compare first components and break a tie by comparing next components recursively), or
+* Quickly (i.e. the 4th component is an SVN number which is monotonically increasing).  
+
+Either way we go, we want to push all version decisions into a centralized utility to avoid confusion.  While {{lfpkg}} tried to fill this role, it is a very large script and even the simple action of extracting a version number ({{-a version}}) adds 1 second of overhead per file.
+
+It is possible to achieve both goals simultaneously by writing a utility in C for extracting and comparing version numbers.  See {{ver}} utility below.  It achieves speed while _properly comparing complete version numbers_.
+
+h2. Locating updates.  
+
+We declare that the directory {{/Cart/updates}} will hold all upgrade files.  This will include all packages ({{*.lfp}}) as well the manifest file described next.
+
+h2. Testing for updates.
+
+The Leap Frog package manager {{lfpkg}} (as currently written) is not sufficient for this task because it can only determine if versions are "not same", not which is newer.  While {{lfpkg}} could easily be extended, it is fairly general purpose and very slow.  Running it (as is) for each package on the cartridge would be prohibitive during boot.
+
+h2. Manifest file -- an optimization
+
+A {{.lfp}} package file contains all the information necessary to determine both its own version and the version of corresponding contents installed on the base.  However, extracting this information is fairly slow using shell scripts.  As you can see, we must:
+
+* Unzip the meta.inf from the .lfp package
+* grep the package meta.inf for {{Version="V"}} and extract V,
+* grep for {{Type="sometype"}} and map that type to a base directory path,
+* determine the sub-directory _within the base directory_ where the zip file unpacks within the base directory to find the installed {{meta.inf}},
+* grep the installed  meta.inf for {{Version="V"}} and extract V.
+
+While a C program could knock this off quickly, it becomes more of a maintenance issue because of C's weak string handling capabilities.  A better solution is to precompute all but the last step and cache this in a manifest file, as it is invariant for any given package.  This also gives us some leeway if we wish to _hack_ the install.
+
+But at some point, version numbers must be compared, and that is non-trivial with dotted numbers.  We place this intelligence in a single C program {{ver}} which can compare two version strings and return a result.
+
+The manifest file {{/Cart/upgrades/manifest.inf}} must be present on the cartridge in order for any upgrades to be done.  The format of this file is a plain text list of packages, one package per line.  Each line contains (in order):
+ 
+* the destination directory (to help determine the installed version number quickly),
+* the version number of the package present on the cartridge (to avoid having to unpack and grep the package meta.inf),
+* and the file name of the package to install.
+
+Each line is composed of the three fields mentioned, directory, version and package, separated by colons ":", with no whitespace.  This format currently does not support comments.
+
+(!) Notice that the firmware upgrade package _is not listed_ in the manifest.  This is because it uses a different update mechanism than the other packages; {{lfpkg}}, described below, handles this correctly and omits it from the manifest.
+
+Here is a sample manifest file:
+
+{noformat}
+/Didj/Base/Fonts:19:Fonts-19.lfp
+/Didj/Base/bin:19:bin-19.lfp
+/Didj/Base/Brio:0.1.36.2839:Brio-0.1.36.2839.lfp
+/Didj/Base/lib:21:lib-19.lfp
+{noformat}
+
+h2. Automatically creating the manifest file 
+
+This can be done either on the host PC or on Didj itself, using {{lfpkg}}:
+{quote}
+{{lfpkg -a manifest}} _updates_directory_ > _manifest_file_
+{quote}
+
+* On Didj
+{noformat}
+usbctl -d mass_storage -a disable
+lfpkg -a manifest /Cart/updates > /Cart/updates/manifest.inf
+{noformat}
+* From a Ubuntu Linux PC:
+For example, if the Cartridge volume is attached and unlocked via USB:
+{noformat}
+LinuxDist/packages/lfpkg/lfpkg -a manifest /media/Cartridge/updates > /media/Cartridge/updates/manifest.inf
+{noformat}
+
+
+h2. When during Boot is Update Tested and Performed?
+
+Ideally, all packages would be upgraded at the same point in the boot process.  This allows us to reuse the existing state machine for the USB upgrade for this purpose.
+
+* Boot Loader is not upgradable by design, so no problem there.
+
+* Kernel + Root File System, a.k.a. {{firmware-*.lfp}} is checked with {{fwcheck}} in {{launch_main}}'s {{POWER_ON_RESET_STATE}}, and so we can reuse the same {{FIRMWARE_UPDATE_STATE}}.  An upgrade at this time of the boot is possible because there are two copies of the kernel+RFS, and we can update the unused one.  (!) But in order for the upgrade to take effect, we must reboot.
+
+* Brio and other .lfp packages are not stored twice; we must upgrade the live copy.  To do this, we must be sure that no other process is holding any files open that might conflict with the install, and we must restart any apps so that they can see the new content.  We have two choices here:
+*# Kill other processes
+*# Install before any other process starts (or reboot).
+
+* Each choice has problems.  
+*# Killing involves the uncertainty that you killed enough, and that what you killed, will shutdown gracefully.  Also, we must be
+sure we know what and how to restart what we killed.
+*# Installing early is possible because Brio is only considered running in the {{RUN_MAIN_APP_STATE}} state of {{launch_main}}.  Unfortunately, the existing state machine always goes from {{FIRMWARE_UPDATE_STATE}} to {{POWER_OFF_STATE}}, _forcing a reboot_, even though in the case of Brio, this is not needed.
+
+But choice #2 makes the most sense from the perspective of code reuse and similar user interface.
+
+h2. Determining Success Of Install
+
+The kernel+RFS is already verified.  (?) But what can we do for Brio?  We can use {{lfpkg -a verify}} to test for a package install, but we have no easy recourse if it fails.  We could:
+* (!) Rename a package before installing on top of it, and if verify fails, remove new package and rename old back.
+
+h2. Resolving Conflicts Between USB and Cartridge
+
+Again, USB is probably fresher, so it should win.
+
+h1. {{Ver}} Utility.
+
+This utility will embody version number policy.  For performance, it is written in C.  For simplicity, it performs very few functions.
+
+{noformat}
+ver <version1> <op> <version2> [-v]
+{noformat}
+Where <version1> and <version2> are two version strings, possibly encrusted with other characters like quotes or the rest of the {{Version=}} line that a {{meta.inf}} file has.  <op> is one of {{-eq}} or {{-gt}} to compare for equality or "newer".  The optional {{-v}} parameter (which must be _after other parameters_) will give verbose output.
+
+
+A second functionality of {{ver}} is
+{noformat}
+ver <version1>
+{noformat}
+Which simply extracts the full version number from the string it was input.  This is useful for generating the {{manifest.inf}} file.
+
+h1. General Background
+
+h2. Existing mechanism for updates using .lfps on Omega Term.
+
+* All but {{bootstrap-\*.lfp}} and {{firmware-\*.lfp}} simply unzip into a subdirectory in {{/Didj}}, often {{/Didj/Base}}.
+* {{bootstrap-}} and {{firmware-}} are updated with \{bl,fw\}\{check,update\} scripts when the USB is disconnected.
+* {{firmware-\*.lfp}} is exploded into {{/Didj/Base/firmware-\*}}, and it remains there, even after successful install.  New firmware packages will replace it automatically because there is no version number in the directory name (but there is in the .lfp name!).

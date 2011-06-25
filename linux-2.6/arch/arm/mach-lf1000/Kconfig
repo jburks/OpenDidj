@@ -1,0 +1,122 @@
+if ARCH_LF1000
+menu "LF1000 platform type"
+
+choice
+	prompt "LeapFrog development board"
+	default MACH_LF_LF1000
+
+config MACH_ME_LF1000
+	bool "Support MagicEyes platform                    (ME board / LF1000  cpu)"
+	help
+	  Include support for the MagicEyes platform (ME board / LF1000  cpu).
+
+config MACH_LF_LF1000
+	bool "Support LeapFrog(R) LF1000 platform     (LF board / LF1000  cpu)"
+	help
+	  Include support for the LeapFrog(R) LF1000 platform (LF board / LF1000  cpu).
+
+endchoice
+
+choice
+	prompt "CPU speed"
+	default CPU_SPEED_393216000
+
+config CPU_SPEED_385024000
+	bool "385.024 Mhz"
+	help
+	  Older CPU speed.
+
+config CPU_SPEED_393216000
+	bool "393.216 Mhz"
+	help
+	  Standard CPU speed.
+
+config CPU_SPEED_532480000
+	bool "532.480 Mhz"
+	help
+	  Requires higher CPU Core voltage
+endchoice
+
+config LF1000_SCREEN
+	bool "Support for configurable LCD modules (screens)"
+	depends on ARCH_LF1000 && (FB_LF1000 || FB_LF1000_MODULE)
+	default Y
+	---help---
+	This option enables platform support for LCD modules, including display
+	controller initialization.  IF you are using the LF1000 frame buffer,
+	say Y.
+
+config LF1000_GPIO
+       tristate "Device driver for LF1000 General Purpose IO"
+       depends on ARCH_LF1000
+       ---help---
+       This option enables device driver support for LF1000 General Purpose IO. If unsure, say Y.
+
+config LF1000_GPIO_DEBUG
+	bool "Debugging for LF1000 General Purpose IO Driver"
+	depends on ARCH_LF1000 && LF1000_GPIO
+	default n
+	---help---
+	This option enables additional debugging for the LF1000 GPIO Driver.
+	If unsure, say N.
+
+config LF1000_SDRAM_TUNE
+	bool "Enable sysfs entries for SDRAM tuning"
+	depends on ARCH_LF1000
+	default n
+	---help---
+	This option enables the SYSFS MCU_Y entries for tuning SDRAM access.
+
+config LF1000_BOOT_PARAMS_ADDR
+	hex "Address where kernel finds its boot parameters"
+	depends on ARCH_LF1000
+	default 0x00003000
+	---help---
+	Sets option sets the address where the kernel expects to find its boot
+	parameters at initialization time.  They are placed there by the 
+	bootstrap loader.  Only change this if you know what you're doing (and
+	are recompiling and bootloader as well)!
+
+config LF1000_OVERRIDE_BOARD_ID
+        bool "Override Board ID"
+        ---help---
+        Override Board hardware ID
+
+config LF1000_OVERRIDE_BOARD_ID_VALUE
+	int "Override value"
+	depends on LF1000_OVERRIDE_BOARD_ID
+	default 0
+	---help---
+	Selected Board override value
+
+config LF1000_OVERRIDE_CARTRIDGE_ID
+        bool "Override Cartridge ID"
+        ---help---
+        Override Cartridge ID
+
+config LF1000_OVERRIDE_CARTRIDGE_ID_VALUE
+	int "Override value"
+	depends on LF1000_OVERRIDE_CARTRIDGE_ID
+	default 7
+	---help---
+	Selected  Cartridge override value
+
+config LF1000_STRESS_TEST
+	bool "Enable LF1000 stress testing"
+	depends on ARCH_LF1000
+	default n
+	---help---
+	Activates instrumented code which is used to validate the robustness
+	of the platform.  Example tests include inopportune power failures and
+	spontaneous peripheral disconnects.  In addition to this master switch,
+	individual tests must be activated in the appropriate sub-menus.  This
+	option also creates sysfs entries in
+	/sys/devices/platform/lf1000-gpio/stress/
+	which control the mapping of GPIO pins to stress test functions (e.g.,
+	to cut power, assert GPIOB[5]).
+
+	You do not want this, say N.
+
+endmenu
+
+endif

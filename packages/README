@@ -1,0 +1,41 @@
+Welcome to the packages directory.  This is meant to be a place where we can
+consolidate packages that are to be installed on the Lightening root file
+system.  Each package should live in its own diretory and should provide an
+install.sh script for installation.
+
+When you write an installer for your package, please do not use paths that may
+not exist on other developers' environments.  You may depend on the environment
+variables described in the top-level README.  See other package install.sh
+scripts for more detail.  Also consider the following guidelines:
+
+-- Your install script should be called install.sh
+
+-- Your scripts should be invokeable from anywhere.  So use the standard
+   environment variables to make absolute paths.
+
+-- Your scripts should return 0, unless an error occurs.
+
+-- You may (should!) use the functions in LinuxDist/scripts/functions to make
+   your install script more maintainable, easier to read, and easier to
+   understand.  See the various install scripts for examples.
+
+-- Your script must take a -e option.  If this option is present, only
+   components necessary for the embedded system should be installed.  That is,
+   no header files, man pages, etc.  Consider using the set_standard_opts
+   function to parse the options for you.
+
+-- Your script must take a -c option.  If this option is present, your script
+   must perform a clean build from clean source and install it.  Note that it
+   is not necessary to remove installed files; you need only build from fresh
+   source.  These semantics are different than scons or make clean.
+
+-- If your install script copies a bunch of files, please make sure that it
+   does not copy over .svn or other undesireable directories.
+
+-- Use the "set -e" option at the top of your script so that if it fails at any
+   step it will not proceed.  This offers the proper feedback to the caller to
+   fix the failure
+
+-- All packages in this directory should install to either
+   $ROOTFS_PATH/usr/, and in some cases to $ROOTFS_PATH/.  Brio framework
+   and user apps should be in $ROOTFS_PATH/usr/local.

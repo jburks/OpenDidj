@@ -1,0 +1,109 @@
+nandscrub(1)
+
+h1. NAME
+
+nandscrub
+
+h1. SYNOPSIS
+
+*nandscrub* \[-options\] _device_
+
+h1. DESCRIPTION
+
+*nandscrub* is a user-mode utility for viewing or changing the bad-block data stored in the OOB section of NAND memories on Didj.
+
+The _device_ parameter should be an *mtd* character device, such as {{/dev/mtd9}}.
+
+h1. OVERVIEW
+
+*nandscrub* by default operates on all blocks within the specified mtd partition, which may be only a slice of the blocks on a given NAND device.
+
+There are two ways to limit this further:
+
+* the -j option confines operations to only those blocks already considered "bad",
+* the -s and -l options can be used to select the start and number of blocks to use.
+
+{note:title=Note}
+Block numbers used by *nandscrub* are relative to the start of the partition, and not device-absolute, like those used by *nandscan* and *nandwipebbt*
+{note}
+
+h2. UNLOCKING
+
+By default, the *mtd* device subsystem in the Didj Linux kernel prohibits erasure of bad blocks.  It maintains a "bbt" or bad block table which is determined by scanning each and every block's OOB data for the bad block signature.  For so-called "large block" devices (write page > 512 bytes) this is stored at offset 0.  Small block devices store it at offset 5.  In both cases, if the byte at that offset is not 0xff, the whole erase block is considered bad.  *Note:* While an erase block contains anywhere from 16 to 64 write blocks, each with its own OOB area, only the OOB area associated with the first write page in the erase block is used for bad block marking.
+
+In order to allow the *nandscrub* to erase bad block markers, you must inform the kernel to ignore the bbt during erase.  This can be done with the *nandwipebbt* command, which clears the entire bbt
+
+{note:title=note}
+You will need a modified kernel which supports *nandwipebbt* with an extra ioctl in the *mtd* driver.
+{note}
+
+h1. OPTIONS
+
+| *-e, --erase* | Erase bad-block markers |
+| *-m, --mark* | Mark blocks as bad |
+| *-v, --view* | View OOB data.  Automatic if no -e or -m option given |
+| *-w, --narrow* | Show at most only first 20 bytes of OOB data |
+| *-s, --start _block_* | Set starting erase block number (not offset) in NAND of operation (number in decimal) |
+| *-l, --length _length_* | Set number of erase blocks to process |
+| *-j, --justbad* | Only operate on blocks already determined bad by *mtd* driver (scanned at boot time or with *nandscan -s*) |
+| *-p, --pages* | Show/operate on all pages (not just 1st or 1st+2nd in erase block) |
+| *--version* | Print version and exit |
+| *-h, --help* | Summary of options  |
+
+h1. OPERATION
+
+* To quickly erase all the bad blocks markers on a cartridge device at {{mtd9}} 
+
+{noformat}
+nandwipebbt /dev/mtd9
+nandscrub /dev/mtd9 -j -e
+nandscan -s /dev/mtd9 # (or reboot) to update mtd's idea of bbt
+{noformat}
+
+{note:title=Note}
+The bbt (bad block table) maintained by *mtd* is not updated by *nandscrub*, so you must rescan using *nandscan* or reboot in order to have the bad block scan performed again.
+{note}
+
+{note:title=Note}
+Failed OOT erasures are possible, indicating real bad blocks.  If you see this message
+{noformat}
+nandscrub: /dev/mtd9: MTD Erase failure: Input/output error
+{noformat}
+then the block was not erased.  But be sure to unlock the driver with *nandwipebbt* as described above.
+{note}
+
+* To search for and mark bad blocks on {{mtd9}}
+
+{noformat}
+nandtest -m /dev/mtd9
+{noformat}
+
+* To manually mark blocks 15, 16 and 20 bad on {{mtd9}}
+
+{noformat}
+nandscrub /dev/mtd9 -s 15 -l 2 -m
+nandscrub /dev/mtd9 -s 20 -l 1 -m
+{noformat}
+
+* To display the OOB data for a region of NAND
+
+{noformat}
+nandscrub /dev/mtd9 -s 500 -l 10
+{noformat}
+
+h1. BUGS
+
+* The need to rescan after erasing bad block entries is silly.  *nandscrub* needs to handshake with kernel.
+* We should not need to "unlock" the kernel driver by hand.  It should be embedded into *nandscrub*, but because the locking is _modal_, it raises issues around handing signals like ^C.
+
+h1. AUTHOR
+
+Robert Dowling
+
+h1. COPYRIGHT
+
+This is free software.  You may redistribute copies of it under the terms of the GNU General Public License <http://www.gnu.org/licenses/gpl.html>.  There is NO WARRANTY, to the extent permitted by law.
+
+h1. SEE ALSO
+
+nandwipebbt, nandscan, nandtest, flash_erase, flash_eraseall

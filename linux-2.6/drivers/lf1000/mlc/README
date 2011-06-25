@@ -1,0 +1,138 @@
+###############################################################################
+# LF1000 Multi-Layer Controller (MLC) Driver                                  #
+#                                                                             #
+# 04/28/2007 by Andrey Yurovsky <andrey@cozybit.com>                          #
+###############################################################################
+
+This is the MLC driver documentation.  Please note that the MLC driver requires
+that you build and load the DPC driver first.  See the README in the DPC driver
+directory for for information.
+
+0) Contents:
+   1) Building and Installing
+   2) Creating /dev/mlc Device
+   3) Creating /dev/layer Devices
+   4) Application Interface
+   5) Using 3D Mode
+   6) Debugging
+
+1) Building and Installing
+
+This driver can be built into the kernel or as a module using the kernel build
+system.  Use CONFIG_LF1000_MLC to select the MLC driver.  This driver must be
+built with a CPU variant defined (this is set up by defining a platform during
+your build).
+
+2) Creating /dev/mlc Device
+
+You may need to create the /dev/mlc device during initial installation.  To do
+so, you must know the MLC's major number (MLC_MAJOR in mlc.h).  
+For example, to create the device with a major number 251:
+
+$ mknod /dev/mlc c 251 0
+$ chmod a+rw /dev/mlc
+
+3) Creating /dev/layer Devices
+
+The driver provides devices for each MLC layer, /dev/layer0 through 
+/dev/layer3.  You may create them on initial installation using the
+MLC_LAYER_MAJOR number in mlc.h and minor numbers 0 through MLC_NUM_LAYERS-1 
+(corresponding to each layer).  For example:
+
+$ mknod -m 666 /dev/layer2 c 250 2
+
+creates the device node for layer2.
+
+4) Application Interface
+
+MLC and layer configuration from applications is possible through ioctl() 
+calls.  The 2D frame buffers may be written by using mmap() or write() calls on
+the /dev/layerN files.
+
+The included user applications (in lftest/lcd) can be used to control the MLC 
+and as examples for writing your own user space applications.  mlc-control 
+provides an interface to general MLC commands such as setting the background 
+color.  The layer-control program provides layer-specific commands such as 
+setting/getting the layer position, color format, and 3D mode. 
+
+Run them on the target without arguments to see a help screen:
+
+$ mlc-control
+$ layer-control
+
+For example, the background color for the MLC may be set as follows:
+
+$ mlc-control /dev/mlc set background FF0000
+$ mlc-control /dev/mlc set dirty
+
+The first command sets the color to red (0xFF0000).  This change is not 
+applied until the second command sets the top 'dirty' bit.  Note that the 
+'background' command takes six hex characters as in the above example, they
+represent RGB as RRGGBB.
+
+Layer control is done by passing the layer device to the layer-control program.
+For example, the following commands enable layer0, move it to the upper left
+hand corner of the screen with a width of 100 and height of 200, and apply the
+changes by setting the layer's 'dirty' bit:
+
+$ layer-control /dev/layer0 set enable on
+$ layer-control /dev/layer0 set position 0 0 100 200
+$ layer-control /dev/layer0 set dirty
+
+One can also issue 'get' commands for most ioctls, for example:
+
+$ layer-control /dev/layer1 get address
+
+retrieves the frame buffer address for layer1.  Also note that only the first
+letter of 'get' and 'set' is significant, so 'g' or 's' is fine (and easier to
+use in shell scripts).
+
+The mlc_ioctl.h file provides the MLC API to user applications (and it is
+included by mlc-control and layer-control).  The formats.h file provides lookup
+tables for MLC color names and is used my layer-control.
+
+5) Using 3D Mode
+
+To use a layer as a 3D layer, several options must be set via the ioctl
+interface.  You can also set them from the layer-control program.  Assuming you
+wish to use layer0 with the 3D engine, here is how to configure the layer with
+layer-control:
+
+ Set the color format to R5G6B5:
+ $ layer-control /dev/layer0 set format R5G6B5
+
+ Set the horizontal stride to 2 and the vertical stride to 4096:
+ $ layer-control /dev/layer0 set hstride 2
+ $ layer-control /dev/layer0 set vstride 4096
+
+ Enable 3D Mode for this layer:
+ $ layer-control /dev/layer0 set 3D on
+
+ Apply the changes:
+ $ layer-control /dev/layer0 set dirty
+
+Please refer to the LF1000 Data Book for details about configuring 3D layers. 
+The driver will not allow multiple layers to be marked for 3D Mode, if another 
+layer was marked for 3D, it will be unmarked when a different layer is marked.
+
+6) Debugging
+
+The MLC driver allows the MLC registers to be inspected at any time by
+reading files in /proc.  This capability is available only if the driver was
+built for a kernel with CONFIG_PROC_FS enabled.  First, ensure that /proc is
+mounted:
+
+$ mount /proc
+
+The /proc/driver directory contains the following files for MLC debugging:
+              
+mlc_layers
+mlc_top
+
+You may read these files with the 'cat' command, for example:
+
+$ cat /proc/driver/mlc_top
+
+The 'mlc_top' file provides the MLC Top Layer and general registers.  The 
+'mlc_layers' file provides the layer-specific registers.  Refer to the LF1000 
+data book for MLC register definitions.

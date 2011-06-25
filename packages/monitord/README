@@ -1,0 +1,74 @@
+###############################################################################
+# monitord -- the LF1000 System Monitor                                       #
+#                                                                             #
+# Andrey Yurovsky <andrey@cozybit.com>                                        #
+###############################################################################
+
+monitord is a user-space daemon that provides monitoring and messages for a
+Brio Application.  Its main job is to tell the Application to shut down when
+certain events occur.  After sending an event to the Application, a one-shot 
+'Application Timer' is set.  After the timer expires, the Application is killed
+if it is still hanging around.  This ensures that a crashed Brio application
+will not prevent the system from powering down or making file systems available
+over USB.  The daemon can be extended to support other events as well.
+
+monitord also opens and feeds a standard kernel-side software watchdog device
+(/dev/watchdog) periodically.  If the daemon crashes or dies in an unhandled
+manner, the watchdog will fail to be fed and a 'hard' system reset will occur.
+
+#############
+# Debugging #
+#############
+
+You can build monitord with the following options:
+ - DEBUG_NO_DAEMON will cause monitord to not daemonize on startup.  This can
+   be useful for testing.
+ - DEBUG_PRINT will enable the dbprintf() macro, and monitord will send debug 
+   messages straight to /dev/console
+ - KERNEL_WATCHDOG enables watchdog support.  This should normally be enabled, 
+   but you can build the daemon with this turned off if you need to test 
+   without the watchdog feature (or without the corresponding driver present).
+
+#################
+# Communication #
+#################
+
+The Application and monitord communicate by sending messages of type struct 
+app_message.  These contain a 'type' field and a 'payload' field.  The
+Application may send:
+- APP_MSG_GET_USB, payload ignored, to ask the daemon for the current USB
+  timeout.
+- APP_MSG_SET_USB, payload = timeout (in seconds), to set the current USB 
+  timeout.
+- APP_MSG_GET_POWER, payload ignored, to ask the daemon for the current Power
+  timeout.
+- APP_MSG_SET_POWER, payload = timeout (in seconds), to set the current Power
+  timeout.
+The daemon will reply to APP_MSG_GET_USB and APP_MSG_GET_POWER with a message 
+of the same type whose payload contains the value of the appropriate timeout,
+in seconds.  Additionally, the daemon will send:
+- APP_MSG_SET_USB, payload = USB Vbus value, when a USB event occurs.
+- APP_MSG_SET_POWER, payload ignored, when the Power button is pressed.
+
+##################
+# Implementation #
+##################
+
+The daemon's main task is an infinite loop with a blocking point where file
+descriptors for monitored input devices (USB Vbus, Power Button, etc) are 
+checked for pending events.  This loop is also used to check for (and handle)
+messages from the Application and to periodically feed the watchdog.  
+
+When an input event occurs, an appropriate message is sent to the Application
+and the Application Timer is armed for the currently-configured time period.
+When the timer expires, the application is killed.  If the timer was for a USB
+Vbus 'on' event, the USB file systems are enabled.  In the event that the
+daemon could not send a message to the Application, the timer is still armed as
+the failure may be due to the Application being crashed and therefore the 
+Application should still be killed.
+
+The Application may send messages to the daemon to get or set the timeout
+period for each type of timer.  If the timer that is being set is currently
+running, it is reset to the new period and continues to run from there.  If
+the new period is 0, the timer is effectively 'canceled' (even if it was 
+running).  Default values for the timers can be found and set in monitord.h

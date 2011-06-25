@@ -1,0 +1,35 @@
+#!/bin/sh
+# set -x
+BLOCKNUM=1
+BLOCKSIZE=131072
+BLOCKADDR=$(($BLOCKSIZE*$BLOCKNUM))
+DEV=/dev/mtd9
+NANDSCRUB=/Didj/nandscrub
+NANDWIPEBBT=/Didj/nandwipebbt
+NANDSCAN=/Didj/nandscan
+FILE=`mktemp /tmp/tmp.XXXXXX`
+
+check ()
+{
+	nanddump $DEV -s $BLOCKADDR -l $BLOCKSIZE -m 2>/dev/null
+}
+
+$NANDSCAN $DEV -s >/dev/null 2>&1
+nanddump $DEV -s $BLOCKADDR -l $BLOCKSIZE > $FILE 2>/dev/null
+before=`check`
+$NANDSCRUB $DEV -s $BLOCKNUM -l 1 -m > /dev/null
+during=`check`
+if [ "$during" = "$before" ]; then
+	echo "Warning: work-block #$BLOCKNUM is blank!"
+fi
+$NANDWIPEBBT $DEV
+flash_erase $DEV $BLOCKADDR 1 > /dev/null
+$NANDSCAN $DEV -s >/dev/null 2>&1 
+nandwrite $DEV -o -s $BLOCKADDR $FILE >/dev/null 2>&1
+after=`check`
+if [ "$after" != "$before" ]; then
+	echo "ERROR check sum changed.  Work-block #$BLOCKNUM was trashed!!"
+	echo "See $FILE for contents"
+else
+	rm -f $FILE
+fi

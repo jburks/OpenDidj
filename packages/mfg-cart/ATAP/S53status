@@ -1,0 +1,81 @@
+#!/bin/sh
+
+#####################################################################
+#   S53Status file for Didj ATAP manufacturing cartridge
+#     Written by Nathan Durrin
+#
+#   Function:  Provides a final status of the Base update.  Will 
+#              either display a passing flash screen or a failed update
+#	       screen with the output from the error message returned 
+#              from the S52flash file. 
+#              If status was success, it will automatically load the 
+#              DidjMfgTest software if present or it will enable tha
+#              USB so user can upload any newer packages to cartridge.
+#
+#   Revision Table..................................................
+#   Date	Rev   Author		Change	 
+#   ----------------------------------------------------------------
+#   12/03/07    001    N.Durrin	        Initial release with rev box
+#
+#   12/06/07    002    N.Durrin		added date/time stamp for eval
+#					added umount /opt/Didj bbefore erase
+#   12/14/07    003    N.Durrin		Created an ERROR.log on USB so 
+#					user can check errors without serial terminal
+#   01/16/08	004    N.Durrin		Removed erasing mfgdata partition 
+#   01/17/08	005    N.Durrin		Simplified script
+#   01/23/08    006    N.Durrin		Added putting error on screen (may not look right due to character limitation)
+#
+######################################################################
+
+
+
+REVISION="006"
+
+
+case "$1" in
+	start)
+		date		
+		echo "S53status file Rev $REVISION"
+		if [ ! -e /tmp/UDStat ] ; then 
+			if [ ! -e /tmp/reboot ] ; then 
+				if [ -e /Didj/Base/Brio/bin/DidjMfgTest ] ; then
+					/Didj/Base/Brio/bin/DidjMfgTest&
+				else
+					usbctl -d mass_storage -a enable
+					usbctl -d mass_storage -a unlock
+				fi
+			fi		
+		else 
+			layer-control /dev/layer0 s enable off
+			layer-control /dev/layer0 s format B8G8R8
+			layer-control /dev/layer0 s hstride 3
+			layer-control /dev/layer0 s vstride 960
+			layer-control /dev/layer0 s position 0 0 320 240
+			layer-control /dev/layer0 s dirty
+			imager /dev/layer0 /var/screens/FailedUpdate.png
+			layer-control /dev/layer0 s enable on
+			layer-control /dev/layer0 s dirty
+			rm -f /flags/flash_ok
+			echo "Update failed!...error `tail -1 /tmp/UDStat`"
+			cp -f /tmp/UDStat /Didj/ERROR.log
+	 		drawtext /dev/layer0 /test/monotext8x16.rgb "                                        "	
+	 		drawtext /dev/layer0 /test/monotext8x16.rgb "`tail -1 /Didj/ERROR.log`"
+			usbctl -d mass_storage -a enable
+			usbctl -d mass_storage -a unlock
+			exit 86
+			
+		fi
+		;;
+
+	stop)
+		echo "Stopping status script."
+		;;
+	*)
+		echo "Usage: /etc/init.d/status {start|stop}"
+		exit 1
+		;;
+esac
+
+
+exit 0
+

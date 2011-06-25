@@ -1,0 +1,135 @@
+#!/bin/sh
+
+. /var/lib/lftest/functions
+
+# parse args
+set_standard_opts $*
+
+CLASS="usb"
+
+/etc/init.d/lightning stop
+
+if [ "$INTERACTIVE" = "0" ]; then
+	VBUS=`cat /sys/bus/platform/devices/lf1000-usbgadget/vbus`
+
+	CMD="usbctl -d mass_storage -a enable"
+	TEST="Enabling mass_storage driver" run_test_non_interactive $CMD
+
+	if [ "$VBUS" = "0" ]; then
+		# with a linux host, we can only successfully disable the mass storage
+		# driver if we're not plugged in.
+		CMD="usbctl -d mass_storage -a disable"
+		TEST="Disabling mass_storage driver" run_test_non_interactive $CMD
+	fi
+	exit 0;
+fi
+
+###############################
+# Test inserting/removing media
+
+echo "Testing Insertion/Removal of media"
+# ask user if cable is unplugged
+QUESTION="Please make sure USB cable is unplugged."
+TEST="cable unplugged" run_test_interactive $QUESTION
+
+# start with usb mass storage disabled but unlocked
+CMD="usbctl -d mass_storage -a disable"
+TEST="Disabling mass_storage driver" run_test_non_interactive $CMD
+CMD="usbctl -d mass_storage -a unlock"
+TEST="Unlocking mass_storage driver" run_test_non_interactive $CMD
+
+CMD="test `cat /sys/bus/platform/devices/lf1000-usbgadget/vbus` = 0"
+TEST="cable is unplugged and vbus is low." run_test_non_interactive $CMD
+
+# Now plug in the cable
+QUESTION="Now, please plug the USB cable into the host."
+TEST="cable plugged in" run_test_interactive $QUESTION
+
+CMD="test `cat /sys/bus/platform/devices/lf1000-usbgadget/vbus` = 1"
+TEST="cable is plugged in and vbus is high." run_test_non_interactive $CMD
+
+CMD="usbctl -d mass_storage -a enable"
+TEST="Enabling mass_storage driver" run_test_non_interactive $CMD
+
+sleep 2
+
+QUESTION="Did the host detect the mass storage device(s)?"
+TEST="mass storage device detected by host" run_test_interactive $QUESTION
+
+############################
+# Test locking and unlocking
+
+# ask user if cable is unplugged
+echo "Testing Locking"
+QUESTION="Please make sure USB cable is unplugged."
+TEST="cable unplugged" run_test_interactive $QUESTION
+
+# start with usb mass storage enabled and locked
+CMD="usbctl -d mass_storage -a enable"
+TEST="Enabling mass_storage driver" run_test_non_interactive $CMD
+CMD="usbctl -d mass_storage -a lock"
+TEST="Locking mass_storage driver" run_test_non_interactive $CMD
+
+# Now plug in the cable
+QUESTION="Now, please plug the USB cable into the host."
+TEST="cable plugged in" run_test_interactive $QUESTION
+
+CMD="test `cat /sys/bus/platform/devices/lf1000-usbgadget/vbus` = 1"
+TEST="cable is plugged in and vbus is high." run_test_non_interactive $CMD
+
+CMD="usbctl -d mass_storage -a unlock"
+TEST="Unlocking mass_storage driver" run_test_non_interactive $CMD
+
+sleep 2
+
+QUESTION="Did the host detect the mass storage device(s)?"
+TEST="mass storage device detected by host" run_test_interactive $QUESTION
+
+############################
+# Test host-side locking and unlocking
+
+# ask user if cable is unplugged
+echo "Testing host-side locking and unlocking"
+QUESTION="Please make sure USB cable is unplugged."
+TEST="cable unplugged" run_test_interactive $QUESTION
+
+# start with usb mass storage enabled and locked
+CMD="usbctl -d mass_storage -a enable"
+TEST="Enabling mass_storage driver" run_test_non_interactive $CMD
+CMD="usbctl -d mass_storage -a lock"
+TEST="Locking mass_storage driver" run_test_non_interactive $CMD
+
+# Now plug in the cable
+QUESTION="Now, please plug the USB cable into the host."
+TEST="cable plugged in" run_test_interactive $QUESTION
+
+CMD="test `cat /sys/bus/platform/devices/lf1000-usbgadget/vbus` = 1"
+TEST="cable is plugged in and vbus is high." run_test_non_interactive $CMD
+
+QUESTION="Now, please unlock the device from the host"
+TEST="unlocking device" run_test_interactive $QUESTION
+
+CMD="test `cat /sys/bus/platform/devices/lf1000-usbgadget/gadget/gadget-lun0/locked` = 0"
+TEST="Unlock device from host." run_test_non_interactive $CMD
+
+sleep 2
+
+QUESTION="Did the host detect the mass storage device(s)?"
+TEST="mass storage device detected by host" run_test_interactive $QUESTION
+
+QUESTION="Now, please lock the device from the host"
+TEST="locking device" run_test_interactive $QUESTION
+
+CMD="test `cat /sys/bus/platform/devices/lf1000-usbgadget/gadget/gadget-lun0/locked` = 1"
+TEST="Lock the device from host." run_test_non_interactive $CMD
+
+############################
+# Test host-side custom commands
+
+QUESTION="Can you query the battery level from the host?"
+TEST="Querying battery level from host" run_test_interactive $QUESTION
+
+QUESTION="Can you query the rtc value from the host?"
+TEST="Querying rtc from host" run_test_interactive $QUESTION
+
+exit 0

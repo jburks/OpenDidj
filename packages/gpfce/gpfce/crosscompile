@@ -1,0 +1,13 @@
+export ARCH=arm
+export CC=arm-linux-uclibcgnueabi-gcc
+export CXX=arm-linux-uclibcgnueabi-gcc
+export CROSS_COMPILE=arm-linux-uclibcgnueabi-
+export PATH=/usr/local/didj/bin:$PATH
+
+export PROJECT_PATH=/usr/DidiKernel/LF-Linux-6905-20100610-0915
+export TARGET_MACH=LF_LF1000
+export ROOTFS_PATH=/usr/DidiKernel/didj-rootfs
+export RELEASE_PATH=/usr/DidiKernel/release
+export TFTP_PATH=/usr/DidiKernel/tftp
+export EROOTFS_PATH=/usr/DidiKernel/erootfs.stage
+

@@ -1,0 +1,37 @@
+#!/bin/sh
+# this is a simple example script to demonstrate how the init system works.
+
+DB_KEY_FILE_DIR=/etc/dropbear
+DB_RSA_KEY_FILE=$DB_KEY_FILE_DIR/dropbear_rsa_host_key
+DB_DSS_KEY_FILE=$DB_KEY_FILE_DIR/dropbear_rss_host_key
+
+case "$1" in
+        start)
+                echo "Starting dropbear."
+                if [ ! -e $DB_KEY_FILE_DIR ]; then
+                        mkdir $DB_KEY_FILE_DIR
+                fi
+
+                if [ ! -e $DB_RSA_KEY_FILE ]; then
+                        dropbearkey -t rsa -s 1024 -f $DB_RSA_KEY_FILE
+                fi
+
+                if [ ! -e $DB_DSS_KEY_FILE ]; then
+                        dropbearkey -t dss -f $DB_DSS_KEY_FILE
+                fi
+                dropbear -d $DB_DSS_KEY_FILE -r $DB_RSA_KEY_FILE
+                ;;
+
+        stop)
+                echo "Stopping dropbear."
+                killall dropbear 2>/dev/null
+                ;;
+        *)
+                echo "Usage: /etc/init.d/dropbear {start|stop}"
+                exit 1
+                ;;
+esac
+
+exit 0
+
+

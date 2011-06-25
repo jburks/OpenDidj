@@ -1,0 +1,336 @@
+#!/bin/sh
+
+# This is a simple script that activates the usb driver.  It takes the following
+# arguments:
+
+HELP=" \
+  $0 usage: \n\
+  -d <driver>         The name of the driver to activate.  Currently, only \n\
+                      mass_storage is supported. \n\
+  \n\
+  -a <action>         Supported actions are as follows:\n\
+                      mass_storage: enable, disable, lock, unlock,\n\
+                      {en|dis}able (un)loads the media.\n\
+                      \n\
+                      (un)lock is normally performed by a custom scsi command\n\
+                      from the host.  But for development purposes, you can \n\
+                      (un)lock on the command line.  Note that the drive will \n\
+                      not appear to the host unless it is both enabled and \n\
+                      unlocked.\n\
+                      \n\
+\n\
+  -v <value>          Some actions require a value.\n\
+\n\
+  -h                  help \n\n\
+"
+DRIVER=""
+ACTION=""
+while getopts "d:a:hv:" opt; do
+	case "$opt" in
+		"d")
+			DRIVER=$OPTARG
+			if [ ! "$DRIVER" = "mass_storage" ]; then
+				echo "Unsupported driver $DRIVER"
+				exit 1
+			fi
+			;;
+		"a")
+			ACTION=$OPTARG
+			if [ ! "$ACTION" = "enable" -a ! "$ACTION" = "disable" -a \
+				! "$ACTION" = "unlock" -a ! "$ACTION" = "lock" -a \
+				! "$ACTION" = "fsck" ]; then
+				echo "Unsupported action $ACTION"
+				exit 1
+			fi
+			;;
+		"h")
+			echo -e "$HELP"
+			exit 0
+			;;
+		"v")
+			VALUE=$OPTARG
+			;;
+		*)
+			exit 1
+			;;
+	esac
+done
+
+if [ "$DRIVER" = "" -o "$ACTION" = "" ]; then
+	echo "Please provide a driver and an action."
+	exit 1
+fi
+
+# Helper functions
+MTD_NAME=""
+MTD_MOUNT=""
+
+. /etc/ubi/ubi.config
+
+mtd_params() {
+
+	MTD_NAME=""
+	for v in `ls -d /sys/class/ubi/ubi*_*`; do
+		MTD_NUM_MATCH=`cat $v/vol_mtd_num`
+		if [ "$MTD_NUM_MATCH" = "$1" ]; then
+			UBI_DEV=`echo $v | cut -d _ -f 1`
+			MTD_NAME=`cat $UBI_DEV/mtd_dev_name`
+			break
+		fi
+	done
+	if [ "$MTD_NAME" = "" ]; then
+		return
+	fi
+	for cfg in $UBI_MTD_CFGS; do
+		MTD_NAME_MATCH=`echo $cfg | cut -d : -f 1`
+		MTD_MOUNT=`echo $cfg | cut -d : -f 2`
+		if [ "$MTD_NAME_MATCH" = "$MTD_NAME" ]; then
+			MTD_NAME=$MTD_NAME_MATCH
+			return
+		fi
+	done
+	MTD_NAME=""
+	MTD_MOUNT=""
+}
+
+# Decide if lun should mount ro or rw.  Return in $RW_MODE
+# At this time, only production cartridges can be ro.
+rw_mode() {
+	RW_MODE="rw"
+	if [ "$MTD_NAME" = "Cartridge" ]; then
+		# Ask cartinfo since we have a cart
+		RW_MODE=`cartinfo -w`
+	fi
+}
+
+# Okay.  We have a valid driver name and a valid action name.
+
+# To enable mass storage devices, we write to the file in sysfs
+MS_PATH="/sys/bus/platform/devices/lf1000-usbgadget/gadget/"
+
+fsck_lun() {
+
+	if [ ! -e $MS_PATH/gadget-lun$1/enabled ]; then
+		return
+	fi
+
+	echo "0" > $MS_PATH/gadget-lun$1/enabled
+	RESULT=$?
+	if [ ! "$RESULT" = "0" ]; then
+		echo "Failed to disable LUN$1"
+		exit 1;
+	fi
+	
+	LUN_FILE=`cat $MS_PATH/gadget-lun$1/file`
+	MTD_NUM=`echo $LUN_FILE | cut -d "/" -f 3 | cut -c 9-`
+	mtd_params $MTD_NUM
+
+	# Give up for Read-only LUNs
+	rw_mode
+	if [ "$RW_MODE" = "ro" ]; then
+		echo "Skipping fsck on RO LUN$1."
+		return
+	fi
+
+	# mount LUN
+	if [ "$MTD_MOUNT" = "" -o "$MTD_NAME" = "" ]; then
+		echo "Failed to find mountpoint."
+		exit 1
+	fi
+	LUN_MOUNTED=`mount | grep $LUN_FILE | cut -d " " -f 3`
+	if [ ! "$LUN_MOUNTED" = "" ]; then
+		umount -f $LUN_FILE
+		RESULT=$?
+		if [ ! "$RESULT" = "0" ]; then
+			echo "Can't unmount file system!"
+			exit $RESULT
+		fi
+	fi
+
+	echo "*** Running fsck.vfat -n $LUN_FILE ***" > /dev/console
+	# Look, but don't touch...
+	fsck_watch.sh $LUN_FILE  $LUN_MOUNTED
+	if [ $? = 1 ]; then
+		# This arcane echo causes the usbgadget device driver to set
+		# the "needs repair" flag internally.  This is (eventually)
+		# propagated by monitord into the actual /flags/needs_repair
+		# file, but more importantly, launch_main will always look at
+		# the driver itself to determine the "needs repair" state.
+		# See mass_storage script for a bit more on this.
+		echo 1 > /sys/devices/platform/lf1000-usbgadget/gadget/gadget-lun0/needs_repair
+		echo "*** NEEDS REPAIR ***" > /dev/console
+	else
+		# Clear this flag, just like ubi script, although there might
+		# be a good argument for the flag being sticky.
+		# But my suspicion is that we've been down that road and
+		# decided (in ubi) that it should not be sticky across fscks.
+		echo 0 > /sys/devices/platform/lf1000-usbgadget/gadget/gadget-lun0/needs_repair
+		echo "OK!" > /dev/console
+	fi
+}
+
+enable_lun() {
+
+	if [ ! -e $MS_PATH/gadget-lun$1/enabled ]; then
+		return
+	fi
+
+	# unmount the LUN file
+	LUN_FILE=`cat $MS_PATH/gadget-lun$1/file`
+	LUN_MOUNTED=`mount | grep $LUN_FILE | cut -d " " -f 3`
+	if [ ! "$LUN_MOUNTED" = "" ]; then
+		umount $LUN_FILE
+		RESULT=$?
+		if [ ! "$RESULT" = "0" ]; then
+			echo "Failed to unmount LUN$1.  Can't enable USB."
+			exit $RESULT
+		fi
+	fi
+	
+	echo "1" > $MS_PATH/gadget-lun$1/enabled
+	RESULT=$?
+	if [ ! "$RESULT" = "0" ]; then
+		echo "Failed to enable usb mass storage"
+		exit 1;
+	fi
+
+}
+
+disable_lun() {
+
+	if [ ! -e $MS_PATH/gadget-lun$1/enabled ]; then
+		return
+	fi
+
+	echo "0" > $MS_PATH/gadget-lun$1/enabled
+	RESULT=$?
+	if [ ! "$RESULT" = "0" ]; then
+		echo "Failed to disable LUN$1 over USB"
+		exit 1;
+	fi
+	
+	# mount LUN
+	LUN_FILE=`cat $MS_PATH/gadget-lun$1/file`
+	MTD_NUM=`echo $LUN_FILE | cut -d "/" -f 3 | cut -c 9-`
+	mtd_params $MTD_NUM
+	if [ "$MTD_MOUNT" = "" -o "$MTD_NAME" = "" ]; then
+		echo "Failed to find mountpoint."
+		exit 1
+	fi
+	rw_mode
+	
+	# Check if already mounted, in which case we should not have to unmount
+	# unless needs_repair flag is set. 
+	LUN_MOUNTED=`mount | grep $LUN_FILE | cut -d " " -f 3`
+	if [ ! "$LUN_MOUNTED" = "" ]; then
+		# Unmount only as necessary
+		if [ ! -e /flags/needs_repair ]; then
+			echo "Remounting $LUN_FILE on $MTD_MOUNT as $RW_MODE"
+			mount -o remount,$RW_MODE $LUN_FILE
+		else
+			echo "Unmounting $LUN_FILE on $MTD_MOUNT because /flags/needs_repair"
+			umount $LUN_FILE
+		fi
+		RESULT=$?
+		if [ ! "$RESULT" = "0" ]; then
+			echo "Can't unmount/remount file system!"
+			exit $RESULT
+		fi
+		exit 0
+	fi
+
+	# Mount volume only when needs_repair is not set
+	if [ ! -e /flags/needs_repair ]; then
+		echo "Mounting $LUN_FILE on $MTD_MOUNT as $RW_MODE"
+		mount -t vfat -o async,noatime,$RW_MODE $LUN_FILE $MTD_MOUNT
+	else
+		echo "usbctl: Brazenly refusing to mount $LUN_FILE on $MTD_MOUNT because /flags/needs_repair"
+		exit 1
+	fi
+}
+
+# We always have at least one mass storage device.  It is the ubi_Brio mtd
+# device.
+if [ "$DRIVER" = "mass_storage" -a "$ACTION" = "enable" ]; then
+
+	LOADED=`lsmod | grep g_file_storage`
+	if [ "$LOADED" = "" ]; then
+		echo "mass_storage driver not loaded!"
+		exit 1
+	fi
+
+	enable_lun 0
+	enable_lun 1
+
+elif [ "$DRIVER" = "mass_storage" -a "$ACTION" = "disable" ]; then
+
+	LOADED=`lsmod | grep g_file_storage`
+	if [ "$LOADED" = "" ]; then
+		echo "mass_storage driver not loaded!"
+		exit 1
+	fi
+
+	disable_lun 0
+	disable_lun 1
+	
+elif [ "$DRIVER" = "mass_storage" -a "$ACTION" = "unlock" ]; then
+	LOADED=`lsmod | grep g_file_storage`
+	if [ "$LOADED" = "" ]; then
+		echo "mass_storage driver not loaded!"
+		exit 1
+	fi
+
+	echo "0" > $MS_PATH/gadget-lun0/locked
+	RESULT=$?
+	if [ ! "$RESULT" = "0" ]; then
+		echo "Failed to unlock usb mass storage"
+		exit 1;
+	fi
+
+	if [ -e $MS_PATH/gadget-lun1/locked ]; then
+		echo "0" > $MS_PATH/gadget-lun1/locked
+		RESULT=$?
+		if [ ! "$RESULT" = "0" ]; then
+			echo "Failed to unlock usb mass storage"
+			exit 1;
+		fi
+	fi
+
+elif [ "$DRIVER" = "mass_storage" -a "$ACTION" = "fsck" ]; then
+	LOADED=`lsmod | grep g_file_storage`
+	if [ "$LOADED" = "" ]; then
+		echo "mass_storage driver not loaded!"
+		exit 1
+	fi
+
+	fsck_lun 0
+	fsck_lun 1
+
+elif [ "$DRIVER" = "mass_storage" -a "$ACTION" = "lock" ]; then
+	LOADED=`lsmod | grep g_file_storage`
+	if [ "$LOADED" = "" ]; then
+		echo "mass_storage driver not loaded!"
+		exit 1
+	fi
+
+	echo "1" > $MS_PATH/gadget-lun0/locked
+	RESULT=$?
+	if [ ! "$RESULT" = "0" ]; then
+		echo "Failed to lock usb mass storage"
+		exit 1;
+	fi
+	if [ -e $MS_PATH/gadget-lun1/file ]; then
+		echo "1" > $MS_PATH/gadget-lun1/locked
+		RESULT=$?
+		if [ ! "$RESULT" = "0" ]; then
+			echo "Failed to lock usb mass storage"
+			exit 1;
+		fi
+	fi
+
+else
+	echo "unknown action or driver."
+	exit 1
+fi
+
+exit 0

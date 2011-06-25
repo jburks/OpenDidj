@@ -1,0 +1,45 @@
+#!/bin/sh
+
+# Kill main app logged by launch_main (AppManager)
+MAIN_APP=''
+MAIN_PID=''
+if [ -e /tmp/main_app_name ]; then
+	MAIN_APP=`cat /tmp/main_app_name`
+fi
+
+if [ "$MAIN_APP" != "" ]; then
+	MAIN_PID=`pidof $MAIN_APP`
+	killall $MAIN_APP
+	echo killing..$MAIN_PID
+	sleep 1
+	sync
+elif [ -e /tmp/main_app_pid ]; then
+	MAIN_PID=`cat /tmp/main_app_pid`
+	kill $MAIN_PID
+	echo killing..$MAIN_PID
+	sleep 1
+	sync
+fi
+
+# Kill it again if it is still running 
+if [ "$MAIN_PID" != "" -a -e /proc/$MAIN_PID/exe ]; then
+	kill -15 $MAIN_PID
+	echo killing..$MAIN_PID
+	sleep 1
+	sync
+fi
+
+# Kill all processes with open file handles on /Didj partition 
+for i in `find /proc/[0-9]*/fd | xargs rl | grep Didj | cut -f 1 | sort -u`; do
+	kill -15 $i
+	echo killing..$i
+	sleep 1
+	sync
+done
+
+# Kill all processes with open file handles on /Didj partition 
+for i in `find /proc/[0-9]*/fd | xargs rl | grep Didj | cut -f 1 | sort -u`; do
+	kill -9 $i
+	echo killing..$i
+	sync
+done

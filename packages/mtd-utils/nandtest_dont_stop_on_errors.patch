@@ -1,0 +1,96 @@
+--- nandtest.c.orig	2008-01-17 10:08:54.000000000 -0800
++++ nandtest.c	2008-01-18 15:27:52.000000000 -0800
+@@ -71,7 +71,7 @@
+ 	if (len < meminfo.erasesize) {
+ 		printf("\n");
+ 		fprintf(stderr, "Short write (%d bytes)\n", len);
+-		exit(1);
++		return 1;
+ 	}
+ 
+ 	printf("\r%08x: reading...", (unsigned)ofs);
+@@ -84,39 +84,41 @@
+ 			fprintf(stderr, "Short read (%d bytes)\n", len);
+ 		else
+ 			perror("read");
+-		exit(1);
++		return 1;
+ 	}
+ 		
+ 	if (ioctl(fd, ECCGETSTATS, &newstats)) {
+ 		printf("\n");
+ 		perror("ECCGETSTATS");
+ 		close(fd);
+-		exit(1);
++		return 1;
+ 	}
+ 
+ 	if (newstats.corrected > oldstats.corrected) {
+-		printf("\nECC corrected at %08x\n", (unsigned) ofs);
++		fprintf(stderr, "\nECC corrected at %08x\n", (unsigned) ofs);
+ 		oldstats.corrected = newstats.corrected;
+ 	}
+ 	if (newstats.failed > oldstats.failed) {
+-		printf("\nECC failed at %08x\n", (unsigned) ofs);
++		fprintf(stderr, "\nECC failed at %08x\n", (unsigned) ofs);
+ 		oldstats.corrected = newstats.corrected;
+ 	}
+ 	if (len < meminfo.erasesize)
+-		exit(1);
++		return 1;
+ 
+ 	printf("\r%08x: checking...", (unsigned)ofs);
+ 	fflush(stdout);
+ 
+ 	if (memcmp(data, rbuf, meminfo.erasesize)) {
+-		printf("\n");
+-		fprintf(stderr, "compare failed. seed %d\n", seed);
+-		for (i=0; i<meminfo.erasesize; i++) {
+-			if (data[i] != rbuf[i])
+-				printf("Byte 0x%x is %02x should be %02x\n",
+-				       i, rbuf[i], data[i]);
++		int j;
++		fprintf(stderr, "\ncompare failed. seed %d\n", seed);
++		for (i=0, j=0; i<meminfo.erasesize && j<5; i++) {
++			if (data[i] != rbuf[i]) {
++				j++;
++				fprintf(stderr, "Byte 0x%x is %02x and should be %02x\n",
++					i, rbuf[i], data[i]);
++			}
+ 		}
+-		exit(1);
++		return 1;
+ 	}
+ 	return 0;
+ }
+@@ -221,7 +223,7 @@
+ 	wbuf = malloc(meminfo.erasesize * 3);
+ 	if (!wbuf) {
+ 		fprintf(stderr, "Could not allocate %d bytes for buffer\n",
+-			meminfo.erasesize * 2);
++			meminfo.erasesize * 3);
+ 		exit(1);
+ 	}
+ 	rbuf = wbuf + meminfo.erasesize;
+@@ -266,7 +268,7 @@
+ 						fprintf(stderr, "Short read (%d bytes)\n", len);
+ 					else
+ 						perror("read");
+-					exit(1);
++					return 1;
+ 				}
+ 			}
+ 			if (erase_and_write(test_ofs, wbuf, rbuf))
+@@ -274,7 +276,11 @@
+ 			if (keep_contents)
+ 				erase_and_write(test_ofs, kbuf, rbuf);
+ 		}
+-		printf("\nFinished pass %d successfully\n", pass+1);
++		printf("\nFinished pass %d successfully ", pass+1);
++		fflush(stdout);
++		fprintf(stderr, "(%s pass %d finished)\n", 
++				argv[optind], pass+1);
++		fflush(stderr);
+ 	}
+ 	/* Return happy */
+ 	return 0;

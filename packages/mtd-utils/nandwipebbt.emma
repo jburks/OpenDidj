@@ -1,0 +1,39 @@
+nandwipebbt(1)
+
+h1. NAME
+
+nandwipebbt
+
+h1. SYNOPSIS
+
+*nandwipebbt* \[-options\] _device_
+
+h1. DESCRIPTION
+
+*nandwipebbt* is a user-mode utility for erasing the in-memory bad block table used by the *mtd* NAND driver.  It permits subsequent operations on the bad blocks (e.g. *nandscrub*) that would otherwise be disabled internally by *mtd*.
+
+The _device_ parameter should be an *mtd* character device, such as {{/dev/mtd9}}.
+
+h1. OVERVIEW
+
+*nandwipebbt* tells the *mtd* drivers to forget all the bad block information it has cached a given NAND device.  All the partitions on that device are affected by this because only one table is maintained per device.
+
+
+{note:title=Note}
+This has no effect on the bad block information stored on the NAND itself.  Upon the next boot, the bad block table is rebuild from scratch by scanning the device.
+{note}
+
+h1. OPTIONS
+
+| *--version* | Print version and exit |
+| *-h, --help* | Summary of options  |
+
+Robert Dowling
+
+h1. COPYRIGHT
+
+This is free software.  You may redistribute copies of it under the terms of the GNU General Public License <http://www.gnu.org/licenses/gpl.html>.  There is NO WARRANTY, to the extent permitted by law.
+
+h1. SEE ALSO
+
+nandtest, flash_erase, flash_eraseall

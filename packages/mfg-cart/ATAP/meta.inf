@@ -1,0 +1,11 @@
+Device="Didj"
+Type="Test"
+Name="ATAP_Update"
+Publisher="LeapFrog, Inc."
+Developer="LeapFrog, Inc."
+ProductID=0x000E0007
+PartNumber="152-12048"
+Version="017"
+Depends=
+Icon=
+PersistentData=

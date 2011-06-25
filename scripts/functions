@@ -1,0 +1,110 @@
+# This file implements some common utility functions for the LinuxDist build.
+
+function check_vars() {
+	if [ "X$ROOTFS_PATH" == "X" ]; then
+		export ROOTFS_PATH=/home/lfu/nfsroot
+		echo "ROOTFS_PATH not set.  Using default $ROOTFS_PATH"
+	fi
+
+	if [ "X$EROOTFS_PATH" == "X" ]; then
+		export EROOTFS_PATH=~/erootfs.stage
+		echo "EROOTFS_PATH not set.  Using default $EROOTFS_PATH"
+	fi
+
+	if [ "X$TFTP_PATH" == "X" ]; then
+		export TFTP_PATH=/home/lfu/tftpboot
+		echo "TFTP_PATH not set.  Using default $TFTP_PATH"
+	fi
+
+	if [ "X$PREFIX" == "X" ]; then
+		export PREFIX=~/
+	fi
+
+	if [ ! $PROJECT_PATH ]; then
+		export PROJECT_PATH=~/Brio2/LinuxDist/
+		echo "PROJECT_PATH not set.  Using default $PROJECT_PATH"
+	fi
+
+	if [ ! -d $PROJECT_PATH ]; then
+		echo "Error: PROJECT_PATH $PROJECT_PATH does not exist."
+		echo "Please set PROJECT_PATH environment variable."
+		exit 1
+	fi
+	
+	if [ "$BRIO" == "1" ]; then
+		if [ "X$BRIO_PATH" == "X" ]; then
+			BRIO_PATH=~/workspace/Brio2/
+			echo "BRIO_PATH not set.  Using default $BRIO_PATH"
+		fi
+
+		if [ ! -d $BRIO_PATH ]; then
+			echo "Error: BRIO_PATH $BRIO_PATH does not exist."
+			echo "Please set BRIO_PATH environment variable."
+			exit 1
+		fi
+
+		if [ "X$LIGHTNING_CORE_PATH" == "X" ]; then
+			LIGHTNING_CORE_PATH=~/workspace/LightningCore/
+			echo "LIGHTNING_CORE_PATH not set.  Using default $LIGHTNING_CORE_PATH"
+		fi
+
+		if [ ! -d $LIGHTNING_CORE_PATH ]; then
+			echo "Error: LIGHTNING_CORE_PATH $LIGHTNING_CORE_PATH does not exist."
+			echo "Please set LIGHTNING_CORE_PATH environment variable."
+			exit 1
+		fi
+	fi
+
+	if [ "X$CROSS_COMPILE" == "X" ]; then
+		export CROSS_COMPILE=arm-linux-
+		echo "CROSS_COMPILE not set.  Using default $CROSS_COMPILE"
+	fi
+
+	if [ "X$KERNELDIR" == "X" ]; then
+		export KERNELDIR=$PROJECT_PATH/linux-2.6/
+		echo "KERNELDIR not set.  Using default $KERNELDIR"
+	fi
+
+	if [ "X$TARGET_MACH" == "X" ]; then
+		export TARGET_MACH=ME_LF1000
+		echo "TARGET_MACH not set.  Using default $TARGET_MACH"
+	fi
+}
+
+function check_user() {
+	if [ "`id | sed -e 's/(.*//'`" = "uid=0" ]; then
+		echo "This script should not be run as root."
+		exit 1
+	fi
+}
+
+# Call this function with $* to pass your scripts arguments in.
+function set_standard_opts() {
+	export EMBEDDED=0
+	export CLEAN=0
+	export BRIO=0
+	export HELP=0
+	export UBOOTLOADERS=0
+	while getopts "ecbhu" opt; do
+		case "$opt" in
+			"e")
+				export EMBEDDED=1
+				;;
+			"c")
+				export CLEAN=1
+				;;
+			"b")
+				export BRIO=1
+				;;
+			"h")
+				export HELP=1
+				;;
+			"u")
+				export UBOOTLOADERS=1
+				;;
+			*)
+				echo "ignoring option $opt"
+				;;
+		esac
+	done
+}

@@ -1,0 +1,6 @@
+This package contains various splash screens needed by the Lightning platform.
+
+bootsplash.rgb -- This is a splash screen displayed by the bootloader 
+                  immediately after powering up.  It must be in 24-bit raw RGB
+                  format, arranged as B8R8G8.  A bitmap may be converted to
+                  this format by tools such as 'display' from imagemagic.

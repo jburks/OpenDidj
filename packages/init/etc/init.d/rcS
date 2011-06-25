@@ -1,0 +1,42 @@
+#!/bin/sh
+
+echo "Initializing System"
+
+# set environment variables
+. /etc/profile
+
+# Play the boot sound
+# This feature is currently disabled because we don't know if we want to play
+# this here or have the main_app play it.
+#oss -w /var/sounds/PowerUp1-new.wav > /dev/null
+
+# mount file systems
+mount -a
+
+# if the framebuffer device isn't there, we need to run mdev
+if [ ! -e /dev/fb0 ]; then
+	mdev -s
+fi
+
+# run startup scripts in the rc.d directory.
+for f in `ls /etc/rc.d/S* | sort`; do
+	$f start
+done
+
+# handle any known hardware quirks
+if [ -e /flags/speaker_reverse ]; then
+	echo "HW quirk: reversing headphone detect"
+	echo 0x50 > /sys/devices/platform/lf1000-audio/spk_ctl
+fi
+
+# for manufacturing mode, remount rootfs as read/write
+##if [ -e /flags/mfcart ]; then
+##	mount -o remount,rw /
+##fi
+
+# set date to avoid errors in mq_timesend() and mq_timereceive() POSIX funcs
+if [[ `date +%Y` -lt "2008" -o "2030" -lt `date +%Y` ]]
+then
+    date 010101012008
+    hwclock --systohc
+fi

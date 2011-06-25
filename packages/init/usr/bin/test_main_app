@@ -1,0 +1,61 @@
+#!/bin/sh
+
+# This is a dumb app that is used for testing the main_app framework.
+
+R=00
+G=00
+B=ff
+
+SECONDS=0 # by default, never return
+RETVAL=0 # by default, return 0
+USB=0 # By default, don't quit on USB event
+while getopts "s:r:u" opt; do
+	case "$opt" in
+		"s")
+			SECONDS=$OPTARG
+			;;
+		"r")
+			RETVAL=$OPTARG
+			;;
+		"u")
+			USB=1
+			;;
+		*)
+			exit 1
+			;;
+	esac
+done
+
+# clear out the MLC layers
+for i in `seq 0 2`; do
+	layer-control /dev/layer$i s enable off
+	layer-control /dev/layer$i s dirty
+done
+
+while [ $SECONDS != 1 ]; do
+	if [ $SECONDS != 0 ]; then
+		SECONDS=$(($SECONDS-1))
+	fi
+	usb_connected=`cat /sys/devices/platform/lf1000-usbgadget/vbus`
+	if [ $usb_connected = 1 -a $USB = 0 ]; then
+		exit $RETVAL
+	fi
+
+	SYSSTAT=`power-ctl --status | cut -d " " -f 3`
+	if [ "$SYSSTAT" = "SHUTDOWN_PENDING" ]; then
+		exit $RETVAL
+	fi
+
+	# Calculate new color
+	COLOR=$R$G$B
+	TEMP=$R
+	R=$G
+	G=$B
+	B=$TEMP
+
+	mlc-control /dev/mlc s background $COLOR
+	mlc-control /dev/mlc s dirty
+	sleep 1
+done
+
+exit $RETVAL

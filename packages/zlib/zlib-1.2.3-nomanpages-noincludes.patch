@@ -1,0 +1,43 @@
+--- zlib-1.2.3/Makefile	2007-06-08 09:45:49.000000000 -0700
++++ zlib-1.2.3-new/Makefile	2007-06-08 09:46:48.000000000 -0700
+@@ -42,9 +42,6 @@
+ prefix =/usr/local
+ exec_prefix =${prefix}
+ libdir =${exec_prefix}/lib
+-includedir =${prefix}/include
+-mandir =${prefix}/share/man
+-man3dir = ${mandir}/man3
+ 
+ OBJS = adler32.o compress.o crc32.o gzio.o uncompr.o deflate.o trees.o \
+        zutil.o inflate.o infback.o inftrees.o inffast.o
+@@ -91,11 +88,7 @@
+ 
+ install: $(LIBS)
+ 	-@if [ ! -d $(exec_prefix) ]; then mkdir -p $(exec_prefix); fi
+-	-@if [ ! -d $(includedir)  ]; then mkdir -p $(includedir); fi
+ 	-@if [ ! -d $(libdir)      ]; then mkdir -p $(libdir); fi
+-	-@if [ ! -d $(man3dir)     ]; then mkdir -p $(man3dir); fi
+-	cp zlib.h zconf.h $(includedir)
+-	chmod 644 $(includedir)/zlib.h $(includedir)/zconf.h
+ 	cp $(LIBS) $(libdir)
+ 	cd $(libdir); chmod 755 $(LIBS)
+ 	-@(cd $(libdir); $(RANLIB) libz.a || true) >/dev/null 2>&1
+@@ -105,18 +98,14 @@
+ 	  ln -s $(SHAREDLIBV) $(SHAREDLIBM); \
+ 	  (ldconfig || true)  >/dev/null 2>&1; \
+ 	fi
+-	cp zlib.3 $(man3dir)
+-	chmod 644 $(man3dir)/zlib.3
+ # The ranlib in install is needed on NeXTSTEP which checks file times
+ # ldconfig is for Linux
+ 
+ uninstall:
+-	cd $(includedir); \
+ 	cd $(libdir); rm -f libz.a; \
+ 	if test -f $(SHAREDLIBV); then \
+ 	  rm -f $(SHAREDLIBV) $(SHAREDLIB) $(SHAREDLIBM); \
+ 	fi
+-	cd $(man3dir); rm -f zlib.3
+ 
+ mostlyclean: clean
+ clean:

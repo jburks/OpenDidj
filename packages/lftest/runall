@@ -1,0 +1,10 @@
+#!/bin/sh
+
+# This master script runs all tests named lftest_xxx in /usr/bin.
+
+for t in `ls /usr/bin/lftest_*`; do
+	echo "************************************************************"
+	echo "running $t"
+	$t $*
+	echo "************************************************************"	
+done

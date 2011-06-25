@@ -1,0 +1,11 @@
+--- mtd-utils/include/mtd/mtd-abi.h	2008-04-23 13:18:16.000000000 -0700
++++ mtd-utils/include/mtd/mtd-abi.h-new	2008-04-23 13:18:16.000000000 -0700
+@@ -94,6 +94,8 @@
+ #define ECCGETLAYOUT		_IOR('M', 17, struct nand_ecclayout)
+ #define ECCGETSTATS		_IOR('M', 18, struct mtd_ecc_stats)
+ #define MTDFILEMODE		_IO('M', 19)
++#define BBTERASE		_IO('M', 20)
++#define BBTSCAN			_IO('M', 21)
+ 
+ /*
+  * Obsolete legacy interface. Keep it in order not to break userspace

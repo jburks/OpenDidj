@@ -1,0 +1,21 @@
+framebuffer with SD booting rootfs.
+
+download the latest version of the explorer source code:
+LF-Linux-8291-20101026-1425
+
+ 
+untar SD_FB_FILES.tar.gz to LF-Linux-8291-20101026-1425/linux-2.6
+cd LF-Linux-8291-20101026-1425/linux-2.6
+make lf1000_sd_defconfig
+
+make zImage
+
+mount your SD card on your PC then copy the zImage to the root of the fat partition:
+cp arch/arm/boot/zImage /media/NAMEOFYOURFATPARTITION
+sync
+
+reboot the didj with the SD card in your djhi cart and choose:
+'Load zImage from SD'
+
+from the menu and hit the A button
+

@@ -1,0 +1,15 @@
+#!/bin/sh
+
+. /var/lib/lftest/functions
+
+# parse args
+set_standard_opts $*
+
+CLASS="oss"
+
+CMD="oss -w /test/vivaldi.wav"
+TEST="play WAV file" run_test_non_interactive $CMD
+QUESTION="Did you hear the audio?"
+TEST="WAV file played?" run_test_interactive $QUESTION
+
+exit 0

@@ -1,0 +1,534 @@
+#!/bin/sh
+
+# This script launches the main app and implements the default boot behavior
+# described here:
+# http://emma.leapfrog.com/display/BRIO/Lightning+System+Specification
+
+# These are the config vars for this script.  They probably don't need to be
+# updated.
+DEFAULT_MAIN_APP=AppManager
+DOOM_FILE=/Didj/doom
+NEEDS_REPAIR_FILE=/flags/needs_repair
+VBUS_FILE=/flags/vbus
+RESTART_FILE=/tmp/restart
+RUN_APP_FILE=/tmp/appso
+SYS_LOG_FILE=/Didj/Data/sys.log
+
+DEBUG=0
+if [ $DEBUG = 1 ]; then
+	HEARTBEAT=1000 #milliseconds
+else
+	HEARTBEAT=100 #milliseconds
+fi
+LOGFILE=/tmp/main_app_log
+PIDFILE=/tmp/main_app_pid
+NAMEFILE=/tmp/main_app_name
+# Minimum time to wait before launching the application after booting
+APP_DELAY=6000000 #microseconds
+
+# Logging function
+log() {
+	if [ $DEBUG = 1 ]; then
+		echo $*
+	else
+		echo $* >> $LOGFILE
+	fi
+}
+
+
+# get control of usb area.  need to check for Mfg Test there.
+if [ ! -e $NEEDS_REPAIR_FILE ]; then
+	usbctl -d mass_storage -a disable
+fi
+
+# determine the main app
+MAIN_APP=$DEFAULT_MAIN_APP
+if [ -e /flags/main_app ]; then
+	MAIN_APP=`cat /flags/main_app`
+	if [ "$MAIN_APP" = "" ]; then
+		# In this case, the user apparently does not want to run anything.
+		exit 0
+	fi
+elif [ -e /Didj/Base/DidjMfgTest/DidjMfgTest ] ; then
+	# In this case, we want to skip AppManager and run the Mfg Test directly.  
+	MAIN_APP="/Didj/Base/DidjMfgTest/DidjMfgTest"	
+	# Unlock the USB if in Mfg Test Mode.  	
+	usbctl -d mass_storage -a unlock
+fi
+
+# At this point, main app may be a full path or from $PATH
+MAIN_APP_NAME=`echo $MAIN_APP | cut -d " " -f 1`
+which $MAIN_APP_NAME
+if [ ! $? = 0 ]; then
+	# main app is not in PATH.  Assume it is absolute
+	MAIN_APP_FULL_PATH=$MAIN_APP_NAME
+else
+	# main app is in PATH.  Determine full path
+	MAIN_APP_FULL_PATH=`which $MAIN_APP_NAME`
+fi
+# finally, main app may contain / chars.  We want to know just the name for
+# killing purposes.
+NUMFIELDS=`echo $MAIN_APP_FULL_PATH | tr -s / " " | wc -w`
+MAIN_APP_NAME=`echo $MAIN_APP_FULL_PATH | cut -d / -f $(($NUMFIELDS+1))`
+
+log "Looking for main app..."
+if [ -e "$MAIN_APP_FULL_PATH" ]; then
+	log "Found main app $MAIN_APP"
+else
+	log "$MAIN_APP_NAME doesn't exist.  Can't launch!"
+fi
+
+# helper functions
+
+# debug print
+debug() {
+	if [ $DEBUG = 1 ]; then
+		log $*
+	fi
+}
+
+# Update the /flags/needs_repair flag to match what driver thinks
+update_needs_repair() {
+	if [ -e /sys/devices/platform/lf1000-usbgadget/gadget/gadget-lun0/needs_repair ]; then
+		driver_thinks_needs_repair=`cat /sys/devices/platform/lf1000-usbgadget/gadget/gadget-lun0/needs_repair`
+	else
+		driver_thinks_needs_repair="0"
+	fi
+	if [ -e $NEEDS_REPAIR_FILE -a "$driver_thinks_needs_repair" = "0" ]; then
+		echo "Removing $NEEDS_REPAIR_FILE due to usbgadget change" > /dev/console
+		rm -f $NEEDS_REPAIR_FILE
+	elif [ ! -e $NEEDS_REPAIR_FILE -a "$driver_thinks_needs_repair" = "1" ]; then
+		echo "Touching $NEEDS_REPAIR_FILE due to usbgadget change" > /dev/console
+		touch $NEEDS_REPAIR_FILE
+	fi
+}
+
+# The following states are defined
+# POWER_ON_RESET_STATE
+# FIRMWARE_UPDATE_STATE
+# RUN_MAIN_APP_STATE
+# MAIN_APP_DONE_STATE
+# DOWNLOAD_FAILED_STATE
+# DOWNLOAD_COMPLETE_STATE
+# DOWNLOAD_IN_PROGRESS_STATE
+# REINSERT_CART_STATE
+# PENDING_POWERDOWN_STATE
+# PENDING_POWERDOWN_LOW_BATTERY_STATE
+# PENDING_REPAIR_STATE
+
+state=POWER_ON_RESET_STATE
+new_state() {
+	state=$1
+	display_screen $state
+}
+
+CART_INSERT_DETECT=0
+cart_insert_detect() {
+	# Funny, 0 = inserted, 1 = ejected
+	CART_INSERT_DETECT=`gpio-control /dev/gpio invalue 0 18 | grep value | cut -d = -f 2`
+	# echo "CART_INSERT_DETECT='$CART_INSERT_DETECT'" > /dev/console
+}
+
+POWERDOWN_PENDING=0
+powerdown_pending() {
+
+	SYSSTAT=`cat /sys/devices/platform/lf1000-power/shutdown`
+	if [ "$SYSSTAT" = "1" ]; then
+		POWERDOWN_PENDING=1
+	else
+		POWERDOWN_PENDING=0
+	fi
+	return
+}
+
+LOW_BATTERY=0
+CRITICAL_BATTERY=0
+critical_battery() {
+	STATUS=`cat /sys/devices/platform/lf1000-power/status`
+	case "$STATUS" in
+		"3")
+			LOW_BATTERY=1
+			CRITICAL_BATTERY=0
+			;;
+		"4")
+			LOW_BATTERY=1
+			CRITICAL_BATTERY=1
+			;;
+		"*")
+			LOW_BATTERY=0
+			CRITICAL_BATTERY=0
+			;;
+	esac
+	return
+}
+
+USB_CONNECTED=0
+usb_connected() {
+	if [ -e $VBUS_FILE ]; then
+		USB_CONNECTED=`cat $VBUS_FILE`
+	else
+		USB_CONNECTED=`cat /sys/devices/platform/lf1000-usbgadget/vbus`
+	fi
+}
+
+USB_DISCONNECT_OK=0
+usb_disconnect_ok() {
+	if [ -e /sys/devices/platform/lf1000-usbgadget/gadget/disconnect ]; then
+		USB_DISCONNECT_OK=`cat /sys/devices/platform/lf1000-usbgadget/gadget/disconnect`
+	else
+		USB_DISCONNECT=0
+	fi
+}
+usb_disconnect_ok
+
+# Update the interesting variables.  Also update the state for the common
+# cases.
+update_vars() {
+#	reset_pending
+	powerdown_pending
+	critical_battery
+	usb_connected
+	usb_disconnect_ok
+	cart_insert_detect
+
+# shutdown system if requested or critical battyer level, and show appropriate screen
+	if [ $POWERDOWN_PENDING = 1 -o $CRITICAL_BATTERY = 1 ]; then
+		if [ $LOW_BATTERY = 0 ]; then
+			new_state PENDING_POWERDOWN_STATE
+		else
+			new_state PENDING_POWERDOWN_LOW_BATTERY_STATE
+		fi
+	fi
+
+	debug "STATE: $state"
+	debug "POWERDOWN_PENDING: $POWERDOWN_PENDING"
+	debug "CRITICAL_BATTERY: $CRITICAL_BATTERY"
+	debug "LOW_BATTERY: $LOW_BATTERY"
+	debug "USB_CONNECTED: $USB_CONNECTED"
+	debug "CART_INSERT_DETECT: $CART_INSERT_DETECT"
+	debug ""
+}
+
+# This is the state machine.
+update_vars
+update_needs_repair
+while [ "$state" != "PENDING_POWERDOWN_STATE" -a "$state" != "PENDING_POWERDOWN_LOW_BATTERY_STATE" ]; do
+	
+	case "$state" in
+		"POWER_ON_RESET_STATE")
+			# Short-circuit startup if USB connect; go directly 
+			# to download state
+			if [ $USB_CONNECTED = 1 ]; then
+				oss -w /var/sounds/plugUnplug-2.wav
+				usbctl -d mass_storage -a enable
+				new_state DOWNLOAD_IN_PROGRESS_STATE
+			# Checking for fsck.vfat repair flag
+			elif [ -e $NEEDS_REPAIR_FILE ]; then
+				echo "$NEEDS_REPAIR_FILE fsck pending" > /dev/console
+				new_state PENDING_REPAIR_STATE
+			# Short-circuit for "bad cart" which is cart inserted without mount point
+			# If bad cart and no mount, then jump to REINSERT_CART screen
+			# Funny, CART_INSERT_DETECT uses 0 = inserted, 1 = ejected
+			elif [ "$CART_INSERT_DETECT" = "0" -a `mount | grep -c /Cart` = "0" ]; then
+				# So, we're inserted, but not mounted, thus "bad cart connection"
+				OLD_CART_INSERT_DETECT=$CART_INSERT_DETECT
+				new_state REINSERT_CART_STATE
+				echo "Cart insert detected but no /Cart mount" > /dev/console
+			# Check for DOOM file
+			# We must disable usb to check for DOOM file...
+			# Wait, that happend up on line 47!  Save a few seconds by skipping this
+			# usbctl -d mass_storage -a disable
+			elif [ -e $DOOM_FILE ]; then
+				usbctl -d mass_storage -a fsck
+				update_needs_repair
+				if [ -e $NEEDS_REPAIR_FILE ]; then
+					new_state PENDING_REPAIR_STATE
+				else
+					new_state DOWNLOAD_FAILED_STATE
+				fi
+			else
+				#
+				# Generally normal boot path: good cart inserted or no cart inserted,
+				# no other problems
+				#
+
+				# Check for firmware update form Cartridge here
+				NEW_FW=`fwcheck-cart`
+				NEW_BL=''
+				pkupdate-cart -t
+				NEW_PKG=$?
+				echo "fw=$NEW_FW bl=$NEW_BL pkg=$NEW_PKG" > /dev/console
+				if [ "$NEW_FW" -o $NEW_PKG != 0 ]; then
+					new_state FIRMWARE_UPDATE_STATE
+				else
+					# Totally NORMAL start up!
+					new_state RUN_MAIN_APP_STATE
+				fi
+			fi
+			;;
+
+		"FIRMWARE_UPDATE_STATE")
+			UPDATE_ERR=0
+			if [ "$NEW_FW" != "" ]; then
+				echo fwupdate "$NEW_FW" > /dev/console
+				fwupdate "$NEW_FW" > /dev/console
+				FW_RES=$?
+				if [ $FW_RES != 0 ]; then				
+					log "Warning: Firmware update failed."
+					UPDATE_ERR=1
+				fi
+			fi
+			if [ "$NEW_BL" != "" ]; then
+				echo blupdate "$NEW_BL" > /dev/console
+				blupdate "$NEW_BL" > /dev/console
+				BL_RES=$?
+				if [ $BL_RES != 0 ]; then
+					log "Warning: Bootloader update failed.  Board may be bricked."
+					UPDATE_ERR=1
+				fi
+			fi
+			if [ "$NEW_PKG" ]; then
+				echo pkupdate-cart > /dev/console
+				pkupdate-cart > /dev/console
+				PKG_RES=$?
+				if [ $PKG_RES != 0 ]; then
+					log "Warning: pkupdate-cart failed."
+					UPDATE_ERR=1
+				fi
+			fi
+			if [ $UPDATE_ERR != 0 ]; then
+				new_state DOWNLOAD_FAILED_STATE
+			elif [ $USB_CONNECTED = 1 ]; then
+				new_state DOWNLOAD_COMPLETE_STATE
+			else
+				if [ $LOW_BATTERY = 0 ]; then
+					new_state PENDING_POWERDOWN_STATE
+				else
+					new_state PENDING_POWERDOWN_LOW_BATTERY_STATE
+				fi
+			fi
+			;;
+
+		"RUN_MAIN_APP_STATE")
+			usbctl -d mass_storage -a disable
+			if [ ! -e $MAIN_APP_FULL_PATH ]; then
+				new_state DOWNLOAD_FAILED_STATE
+			else
+				$MAIN_APP 2>&1 > /dev/console &
+				MAIN_PID=$!
+				NUMFIELDS=`echo $MAIN_APP | tr -s / " " | wc -w`
+				echo $MAIN_APP_NAME > $NAMEFILE
+				echo $MAIN_PID > $PIDFILE
+				wait $MAIN_PID
+				RESULT=$?
+				rm $PIDFILE
+				sync
+				debug "Main App Result: $RESULT"
+				echo "Main App Result: $RESULT" > /dev/console
+				new_state MAIN_APP_DONE_STATE
+			fi
+			;;
+
+		"MAIN_APP_DONE_STATE")
+			# Exit code 42 means restart AppManager
+			if [ $RESULT = 42 ]; then
+				new_state RUN_MAIN_APP_STATE
+			# A result of 3 means reset, 0 means shutdown
+			elif [ ! $RESULT = 0 -a ! $RESULT = 3 ]; then
+				# The main app failed.  Could be segfault, assert, etc.
+				# Restart AppManager instead of powering down.
+				echo "WARNING: *** abnormal $MAIN_APP_NAME exit $RESULT ***" > /dev/console
+				usbctl -d mass_storage -a fsck
+				update_needs_repair
+				if [ -e $NEEDS_REPAIR_FILE ]; then
+					new_state PENDING_REPAIR_STATE
+				else
+					log "Repaired File System"
+					usbctl -d mass_storage -a disable
+					dmesg > $SYS_LOG_FILE
+					if [ $USB_CONNECTED = 1 ]; then
+						oss -w /var/sounds/plugUnplug-2.wav
+						usbctl -d mass_storage -a enable
+						new_state DOWNLOAD_IN_PROGRESS_STATE
+					elif [ -e $RESTART_FILE ]; then
+						new_state RUN_MAIN_APP_STATE
+					elif [ -e $RUN_APP_FILE -a $RESULT = 139 ]; then
+						new_state RUN_MAIN_APP_STATE
+					else
+						if [ $LOW_BATTERY = 0 ]; then
+							new_state PENDING_POWERDOWN_STATE
+						else
+							new_state PENDING_POWERDOWN_LOW_BATTERY_STATE
+						fi
+					fi
+				fi
+			elif [ $USB_CONNECTED = 0 -a $RESULT = 3 ]; then
+				# main app detected cart insert/eject
+				OLD_CART_INSERT_DETECT=$CART_INSERT_DETECT
+				new_state REINSERT_CART_STATE
+			elif [ $USB_CONNECTED = 0 -a $RESULT = 0 ]; then
+				# main app called for shutdown
+				if [ $LOW_BATTERY = 0 ]; then
+					new_state PENDING_POWERDOWN_STATE
+				else
+					new_state PENDING_POWERDOWN_LOW_BATTERY_STATE
+				fi
+			else
+				# If we're here, the main app quit because the usb has been
+				# plugged in.
+				new_state DOWNLOAD_IN_PROGRESS_STATE
+				oss -w /var/sounds/plugUnplug-2.wav
+				usbctl -d mass_storage -a enable
+				USBCTL_SUCCESS=$?
+				if [ "$USBCTL_SUCCESS" != 0 ]; then
+					# Yikes.  We can't enable the USB.  We should probably kill
+					# any app with open files running out of the USB-visible
+					# partitions.
+					if [ $LOW_BATTERY = 0 ]; then
+						new_state PENDING_POWERDOWN_STATE
+					else
+						new_state PENDING_POWERDOWN_LOW_BATTERY_STATE
+					fi
+				fi
+			fi
+			;;
+
+		"DOWNLOAD_FAILED_STATE")
+			if [ $USB_CONNECTED = 1 ]; then
+				oss -w /var/sounds/plugUnplug-2.wav
+				usbctl -d mass_storage -a enable
+				new_state DOWNLOAD_IN_PROGRESS_STATE
+			fi
+			;;
+
+		"DOWNLOAD_IN_PROGRESS_STATE")
+			if [ $USB_CONNECTED = 1 ]; then
+				if [ $USB_DISCONNECT_OK = 1 ]; then
+					# USB is connected, but we are safe to disconnect
+					usbctl -d mass_storage -a disable
+					if [ ! $? = 0 ]; then
+						# Hmm.  Apparently we can't disconnect.  Let's just stay
+						# in the current state
+						log "Failed to disable mass storage."
+					elif [ -e $DOOM_FILE ]; then
+						# We should never really get here.  This means that the
+						# host didn't finish but said it had!  Remain in this
+						# state.
+						log "Host reported ok to disconnect, but doom file exists."
+						usbctl -d mass_storage -a fsck
+						update_needs_repair
+						if [ -e $NEEDS_REPAIR_FILE ]; then
+							new_state PENDING_REPAIR_STATE
+						else
+							usbctl -d mass_storage -a enable
+						fi
+					else
+						NEW_FW=`fwcheck`
+						NEW_BL=`blcheck`
+						# update the serial number if it exists and reload mass_storage driver to use it.  
+						if [ -e /Didj/UnitID.txt ] ; then 
+							/etc/init.d/mass_storage stop
+							/etc/init.d/mass_storage start
+						fi
+						if [ "$NEW_FW" = "" -a "$NEW_BL" = "" ]; then
+							new_state DOWNLOAD_COMPLETE_STATE
+						else
+							new_state FIRMWARE_UPDATE_STATE
+						fi
+					fi
+				fi
+			else
+				# USB is no longer connected.  User yanked the cable.
+				oss -w /var/sounds/plugUnplug-2.wav
+				usbctl -d mass_storage -a disable
+				USB_RETURN_STAT=`echo $?`
+				if [ ! $USB_RETURN_STAT = 0 -o -e $DOOM_FILE ]; then
+					echo "usb -a disable returned $USB_RETURN_STAT"
+					usbctl -d mass_storage -a fsck
+					update_needs_repair
+					if [ -e $NEEDS_REPAIR_FILE ]; then
+						new_state PENDING_REPAIR_STATE
+					else
+						new_state DOWNLOAD_FAILED_STATE
+					fi
+				else
+					NEW_FW=`fwcheck`
+					NEW_BL=`blcheck`
+					if [ "$NEW_FW" = "" -a "$NEW_BL" = "" ]; then
+						if [ $LOW_BATTERY = 0 ]; then
+							new_state PENDING_POWERDOWN_STATE
+						else
+							new_state PENDING_POWERDOWN_LOW_BATTERY_STATE
+						fi
+					else
+						new_state FIRMWARE_UPDATE_STATE
+					fi
+				fi
+			fi
+			;;
+
+		"DOWNLOAD_COMPLETE_STATE")
+			if [ ! $USB_CONNECTED = 1 ]; then
+				oss -w /var/sounds/plugUnplug-2.wav
+				usbctl -d mass_storage -a disable
+				if [ $LOW_BATTERY = 0 ]; then
+					new_state PENDING_POWERDOWN_STATE
+				else
+					new_state PENDING_POWERDOWN_LOW_BATTERY_STATE
+				fi
+			# This enables the PC App to re-connect without rebooting
+			elif [ $USB_DISCONNECT_OK = 0 ]; then
+				usbctl -d mass_storage -a enable
+				new_state DOWNLOAD_IN_PROGRESS_STATE
+			fi
+			;;
+
+		"PENDING_REPAIR_STATE")
+			if [ $USB_CONNECTED = 1 ]; then
+				oss -w /var/sounds/plugUnplug-2.wav
+				usbctl -d mass_storage -a enable
+				new_state DOWNLOAD_IN_PROGRESS_STATE
+			fi
+			;;
+
+		"REINSERT_CART_STATE")
+			# Check for change in cart_insert_detect
+			dmesg > $SYS_LOG_FILE
+			if [ "$OLD_CART_INSERT_DETECT" != "$CART_INSERT_DETECT" ]; then
+				if [ $LOW_BATTERY = 0 ]; then
+					new_state PENDING_POWERDOWN_STATE
+				else
+					new_state PENDING_POWERDOWN_LOW_BATTERY_STATE
+				fi
+			fi
+			;;
+
+		*)
+			log "Unsuported state $state.  Bailing out!"
+			exit 1
+			;;
+	esac
+
+	# Update the variables and go again
+	usleep $((1000*$HEARTBEAT))
+	update_vars
+	update_needs_repair
+done
+
+case "$state" in
+
+	"PENDING_POWERDOWN_STATE" | "PENDING_POWERDOWN_LOW_BATTERY_STATE")
+		log "main app called for shutdown.  Shutting down!"
+		if [ ! $DEBUG = 1 ]; then
+			poweroff
+		fi
+		;;
+	*)
+		log "Unexpected system state.  Shutting down."
+		if [ ! $DEBUG = 1 ]; then
+			poweroff
+		fi
+		;;
+esac
+
+exit 0
