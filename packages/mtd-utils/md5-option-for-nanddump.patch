@@ -1,11 +1,11 @@
-Common subdirectories: mtd-utils/arm-linux and ../new/mtd-utils/arm-linux
-Common subdirectories: mtd-utils/checkfs and ../new/mtd-utils/checkfs
-Common subdirectories: mtd-utils/.git and ../new/mtd-utils/.git
-Common subdirectories: mtd-utils/include and ../new/mtd-utils/include
-Common subdirectories: mtd-utils/jittertest and ../new/mtd-utils/jittertest
-diff -Nu mtd-utils/Makefile ../new/mtd-utils/Makefile
+Common subdirectories: mtd-utils/arm-linux and arm-linux
+Common subdirectories: mtd-utils/checkfs and checkfs
+Common subdirectories: mtd-utils/.git and .git
+Common subdirectories: mtd-utils/include and include
+Common subdirectories: mtd-utils/jittertest and jittertest
+diff -Nu mtd-utils/Makefile Makefile
 --- mtd-utils/Makefile	2007-09-25 15:47:26.000000000 -0700
-+++ ../new/mtd-utils/Makefile	2007-09-25 15:02:56.000000000 -0700
++++ Makefile	2007-09-25 15:02:56.000000000 -0700
 @@ -85,7 +85,8 @@
  $(BUILDDIR)/fectest: $(BUILDDIR)/fectest.o $(BUILDDIR)/crc32.o $(BUILDDIR)/fec.o
  	$(CC) $(LDFLAGS) -o $@ $^
@@ -16,9 +16,9 @@ diff -Nu mtd-utils/Makefile ../new/mtd-utils/Makefile
  
  install: ${TARGETS}
  	mkdir -p ${DESTDIR}/${SBINDIR}
-diff -Nu mtd-utils/md5.c ../new/mtd-utils/md5.c
+diff -Nu mtd-utils/md5.c md5.c
 --- mtd-utils/md5.c	1969-12-31 16:00:00.000000000 -0800
-+++ ../new/mtd-utils/md5.c	2007-09-25 15:02:54.000000000 -0700
++++ md5.c	2007-09-25 15:02:54.000000000 -0700
 @@ -0,0 +1,460 @@
 +/*
 + *  RFC 1321 compliant MD5 implementation
@@ -480,9 +480,9 @@ diff -Nu mtd-utils/md5.c ../new/mtd-utils/md5.c
 +    return( 0 );
 +}
 +#endif
-diff -Nu mtd-utils/md5.h ../new/mtd-utils/md5.h
+diff -Nu mtd-utils/md5.h md5.h
 --- mtd-utils/md5.h	1969-12-31 16:00:00.000000000 -0800
-+++ ../new/mtd-utils/md5.h	2007-09-25 15:02:56.000000000 -0700
++++ md5.h	2007-09-25 15:02:56.000000000 -0700
 @@ -0,0 +1,121 @@
 +/**
 + * \file md5.h
@@ -605,9 +605,9 @@ diff -Nu mtd-utils/md5.h ../new/mtd-utils/md5.h
 +#endif
 +
 +#endif /* md5.h */
-diff -Nu mtd-utils/nanddump.c ../new/mtd-utils/nanddump.c
+diff -Nu mtd-utils/nanddump.c nanddump.c
 --- mtd-utils/nanddump.c	2007-09-11 17:43:22.000000000 -0700
-+++ ../new/mtd-utils/nanddump.c	2007-09-25 15:02:55.000000000 -0700
++++ nanddump.c	2007-09-25 15:02:55.000000000 -0700
 @@ -29,6 +29,8 @@
  #include <asm/types.h>
  #include <mtd/mtd-user.h>
@@ -772,5 +772,5 @@ diff -Nu mtd-utils/nanddump.c ../new/mtd-utils/nanddump.c
  	/* Close the output file and MTD device */
  	close(fd);
  	close(ofd);
-Common subdirectories: mtd-utils/tests and ../new/mtd-utils/tests
-Common subdirectories: mtd-utils/ubi-utils and ../new/mtd-utils/ubi-utils
+Common subdirectories: mtd-utils/tests and tests
+Common subdirectories: mtd-utils/ubi-utils and ubi-utils

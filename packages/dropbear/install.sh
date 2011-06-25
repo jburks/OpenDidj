@@ -22,7 +22,7 @@ pushd $DB_DIR
 
 make PROGRAMS="dropbear dbclient dropbearkey dropbearconvert scp" MULTI=1
 
-install -m 755 dropbearmulti /home/joe/work/opendidj/rootfs//bin
+install -m 755 dropbearmulti $ROOTFS_PATH/bin
 sudo chown root $ROOTFS_PATH/bin/dropbearmulti
 sudo chgrp 0 $ROOTFS_PATH/bin/dropbearmulti
 rm -f $ROOTFS_PATH/sbin/dropbear
