@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BUSYBOX_SRC=busybox-1.5.0.tar.gz
+BUSYBOX_SRC=busybox-1.5.0.tar.bz2
 
 set -e
 
@@ -25,7 +25,7 @@ BUSYBOX_DIR=`echo "$BUSYBOX_SRC" | cut -d '.' -f -3`
 
 if [ "$CLEAN" == "1" -o ! -e $BUSYBOX_DIR ]; then
 	rm -rf $BUSYBOX_DIR
-	tar -xzf $BUSYBOX_SRC
+	tar -xjf $BUSYBOX_SRC
 fi
 
 patch -p 0 < readbug.patch
