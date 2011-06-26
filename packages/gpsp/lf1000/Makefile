@@ -7,7 +7,8 @@
 
 #Edit values below to reflect your build environment.
 #PREFIX  = /this/should/point/to/your/cross/compiler 
-PREFIX  = /usr/local/didj
+PREFIX = /opt/Ridgerun
+#PREFIX  = /usr/local/didj
 CC        = $(CROSS_COMPILE)gcc
 STRIP     = $(CROSS_COMPILE)strip
 

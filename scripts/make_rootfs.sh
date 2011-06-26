@@ -36,6 +36,7 @@ if [ "$CLEAN" == "1" ]; then
 	sudo rm -rf $ROOTFS_PATH/var/lib/oprofile
 	sudo rm -rf $ROOTFS_PATH/root/.oprofile
 	rm -rf $ROOTFS_PATH
+	rm -rf $TFTP_PATH
 fi
 
 # Create directory structure

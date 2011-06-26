@@ -13,7 +13,7 @@ check_user
 
 # parse args
 set_standard_opts $*
-
+mkdir -p $TFTP_PATH
 mkdir -p $ROOTFS_PATH
 pushd $ROOTFS_PATH
 mkdir -p bin dev etc lib proc sbin tmp usr var sys boot mnt mnt2 opt Didj flags Cart mfgdata
